@@ -1,34 +1,72 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { Track } from '../../shared/types';
 
+export type RepeatMode = 'off' | 'all' | 'one';
+
 export interface PlayerState {
   currentTrack: Track | null;
+  /** The play queue in playback order (already shuffled if shuffle is on) */
   queue: Track[];
+  /** Index into queue of the currently playing track, or -1 if nothing */
   queueIndex: number;
   isPlaying: boolean;
   currentTime: number;
   duration: number;
   volume: number;
+  shuffle: boolean;
+  repeat: RepeatMode;
 }
 
-interface ScrobbleTracking {
+/**
+ * Internal scrobble tracking, kept in a ref to avoid re-renders.
+ */
+interface ScrobbleState {
   track: Track | null;
   startedAt: Date | null;
+  /** Cumulative seconds of *actual* playback (excludes paused time). */
   secondsPlayed: number;
-  lastTickAt: number; // performance.now() timestamp of last tick
-  scrobbled: boolean; // already submitted for this play?
-  nowPlayingSent: boolean; // already sent the nowPlaying update?
+  nowPlayingSent: boolean;
+  scrobbled: boolean;
+  lastTimeUpdate: number;
+}
+
+/**
+ * Last.fm rule: scrobble if track ≥ 30s long AND we've played at least
+ * min(4 minutes, 50% of duration).
+ */
+function shouldScrobble(track: Track, secondsPlayed: number): boolean {
+  if (track.duration < 30) return false;
+  const threshold = Math.min(240, track.duration / 2);
+  return secondsPlayed >= threshold;
+}
+
+/**
+ * Fisher-Yates shuffle, returns a new array.
+ */
+function shuffleArray<T>(arr: T[]): T[] {
+  const out = [...arr];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
 }
 
 export function usePlayer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const trackingRef = useRef<ScrobbleTracking>({
+
+  // The original (un-shuffled) order of the current queue.
+  // We keep this so toggling shuffle off restores the original order.
+  const originalOrderRef = useRef<Track[]>([]);
+
+  // Scrobble tracking lives in a ref to avoid re-renders on every tick.
+  const scrobbleRef = useRef<ScrobbleState>({
     track: null,
     startedAt: null,
     secondsPlayed: 0,
-    lastTickAt: 0,
-    scrobbled: false,
     nowPlayingSent: false,
+    scrobbled: false,
+    lastTimeUpdate: 0,
   });
 
   const [state, setState] = useState<PlayerState>({
@@ -39,101 +77,111 @@ export function usePlayer() {
     currentTime: 0,
     duration: 0,
     volume: 0.8,
+    shuffle: false,
+    repeat: 'off',
   });
 
-  /**
-   * Reset tracking when we move to a new track.
-   * Called from loadAndPlay before starting a new track.
-   */
-  const resetTracking = useCallback((track: Track) => {
-    trackingRef.current = {
-      track,
-      startedAt: new Date(),
-      secondsPlayed: 0,
-      lastTickAt: performance.now(),
-      scrobbled: false,
-      nowPlayingSent: false,
-    };
-  }, []);
+  // Latest state in a ref so audio event handlers can see fresh values
+  // without re-binding on every render.
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
-  /**
-   * Should the current track be scrobbled now?
-   * Last.fm rules: track >= 30s AND played for either 240s or half its duration.
-   */
-  const shouldScrobble = useCallback((track: Track, played: number) => {
-    if (track.duration < 30) return false;
-    return played >= 240 || played >= track.duration / 2;
-  }, []);
-
-  // Initialise audio element
+  // ---------- audio element setup ----------
   useEffect(() => {
     const audio = new Audio();
-    audio.volume = state.volume;
+    audio.volume = stateRef.current.volume;
     audioRef.current = audio;
 
     const onTimeUpdate = () => {
-      setState((s) => ({ ...s, currentTime: audio.currentTime, duration: audio.duration || 0 }));
+      const audio = audioRef.current;
+      if (!audio) return;
 
-      // Scrobble tracking: accumulate playtime only when actually playing
-      const now = performance.now();
-      const t = trackingRef.current;
-      if (t.track && !audio.paused) {
-        const delta = (now - t.lastTickAt) / 1000;
-        // Sanity: cap delta at 2s to avoid huge jumps from tab being inactive
-        if (delta > 0 && delta < 2) {
-          t.secondsPlayed += delta;
+      // Track played-seconds for scrobble logic. Only count time when the
+      // audio element is actually playing.
+      const sb = scrobbleRef.current;
+      const now = audio.currentTime;
+      if (!audio.paused) {
+        const delta = now - sb.lastTimeUpdate;
+        if (delta > 0 && delta < 5) {
+          // delta < 5 filters out big jumps from seeking
+          sb.secondsPlayed += delta;
         }
-        t.lastTickAt = now;
-
-        // Send nowPlaying once, ~3 seconds in
-        if (!t.nowPlayingSent && t.secondsPlayed >= 3) {
-          t.nowPlayingSent = true;
-          const tr = t.track;
-          window.api.lastfmNowPlaying({
-            artist: tr.artist,
-            track: tr.title,
-            album: tr.album,
-            albumArtist: tr.albumArtist,
-            trackNumber: tr.trackNumber || undefined,
-            duration: tr.duration || undefined,
-          }).catch(() => {});
-        }
-
-        // Submit scrobble once threshold is met
-        if (!t.scrobbled && t.startedAt && shouldScrobble(t.track, t.secondsPlayed)) {
-          t.scrobbled = true;
-          const tr = t.track;
-          window.api.lastfmScrobble({
-            artist: tr.artist,
-            track: tr.title,
-            album: tr.album,
-            albumArtist: tr.albumArtist,
-            trackNumber: tr.trackNumber || undefined,
-            duration: tr.duration || undefined,
-            timestamp: Math.floor(t.startedAt.getTime() / 1000),
-          }).catch(() => {});
-        }
-      } else {
-        // Even when paused, keep lastTickAt fresh so the next resume calculates correctly
-        t.lastTickAt = now;
       }
+      sb.lastTimeUpdate = now;
+
+      // Send "now playing" once, after a few seconds
+      if (sb.track && !sb.nowPlayingSent && sb.secondsPlayed >= 3) {
+        sb.nowPlayingSent = true;
+        const tr = sb.track;
+        window.api.lastfmNowPlaying({
+          artist: tr.artist,
+          track: tr.title,
+          album: tr.album,
+          albumArtist: tr.albumArtist,
+          trackNumber: tr.trackNumber || undefined,
+          duration: tr.duration || undefined,
+        }).catch(() => {});
+      }
+
+      // Scrobble once threshold is hit
+      if (sb.track && !sb.scrobbled && sb.startedAt && shouldScrobble(sb.track, sb.secondsPlayed)) {
+        sb.scrobbled = true;
+        const tr = sb.track;
+        window.api.lastfmScrobble({
+          artist: tr.artist,
+          track: tr.title,
+          album: tr.album,
+          albumArtist: tr.albumArtist,
+          trackNumber: tr.trackNumber || undefined,
+          duration: tr.duration || undefined,
+          timestamp: Math.floor(sb.startedAt.getTime() / 1000),
+        }).catch(() => {});
+      }
+
+      setState((s) => ({ ...s, currentTime: audio.currentTime, duration: audio.duration || 0 }));
     };
 
     const onEnded = () => {
-      setState((s) => {
-        const nextIndex = s.queueIndex + 1;
-        if (nextIndex < s.queue.length) {
-          queueMicrotask(() => loadAndPlay(s.queue[nextIndex]));
-          return { ...s, queueIndex: nextIndex, currentTrack: s.queue[nextIndex], isPlaying: true, currentTime: 0 };
-        }
-        return { ...s, isPlaying: false };
-      });
+      // Decide what to do based on repeat mode
+      const cur = stateRef.current;
+      if (cur.repeat === 'one' && cur.currentTrack) {
+        // restart same track
+        audio.currentTime = 0;
+        audio.play().catch(() => {});
+        // reset scrobble state for the replay
+        resetScrobble(cur.currentTrack);
+        return;
+      }
+
+      // Advance to next, or stop, or wrap
+      const nextIndex = cur.queueIndex + 1;
+      if (nextIndex < cur.queue.length) {
+        const next = cur.queue[nextIndex];
+        loadAndPlayInternal(next);
+        setState((s) => ({
+          ...s,
+          queueIndex: nextIndex,
+          currentTrack: next,
+          isPlaying: true,
+          currentTime: 0,
+        }));
+      } else if (cur.repeat === 'all' && cur.queue.length > 0) {
+        const next = cur.queue[0];
+        loadAndPlayInternal(next);
+        setState((s) => ({
+          ...s,
+          queueIndex: 0,
+          currentTrack: next,
+          isPlaying: true,
+          currentTime: 0,
+        }));
+      } else {
+        // End of queue, repeat off
+        setState((s) => ({ ...s, isPlaying: false }));
+      }
     };
-    const onPlay = () => {
-      // Reset tick timer on resume so we don't count paused time
-      trackingRef.current.lastTickAt = performance.now();
-      setState((s) => ({ ...s, isPlaying: true }));
-    };
+
+    const onPlay = () => setState((s) => ({ ...s, isPlaying: true }));
     const onPause = () => setState((s) => ({ ...s, isPlaying: false }));
 
     audio.addEventListener('timeupdate', onTimeUpdate);
@@ -152,10 +200,23 @@ export function usePlayer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadAndPlay = useCallback(async (track: Track) => {
+  // ---------- helpers ----------
+
+  const resetScrobble = (track: Track) => {
+    scrobbleRef.current = {
+      track,
+      startedAt: new Date(),
+      secondsPlayed: 0,
+      nowPlayingSent: false,
+      scrobbled: false,
+      lastTimeUpdate: 0,
+    };
+  };
+
+  const loadAndPlayInternal = useCallback(async (track: Track) => {
     const audio = audioRef.current;
     if (!audio) return;
-    resetTracking(track);
+    resetScrobble(track);
     const url = await window.api.getTrackFileUrl(track.filePath);
     audio.src = url;
     audio.currentTime = 0;
@@ -164,60 +225,107 @@ export function usePlayer() {
     } catch (e) {
       console.error('Playback failed', e);
     }
-  }, [resetTracking]);
+  }, []);
 
+  // ---------- public API ----------
+
+  /**
+   * Replace the queue with a new list and start playing at the given index.
+   * Respects current shuffle setting.
+   */
   const playQueue = useCallback((tracks: Track[], startIndex: number) => {
     if (tracks.length === 0) return;
     const idx = Math.max(0, Math.min(startIndex, tracks.length - 1));
+
+    originalOrderRef.current = tracks;
+
+    let queue: Track[];
+    let queueIndex: number;
+
+    if (stateRef.current.shuffle) {
+      // Put the chosen track first, then shuffle the rest after it
+      const startTrack = tracks[idx];
+      const others = tracks.filter((_, i) => i !== idx);
+      queue = [startTrack, ...shuffleArray(others)];
+      queueIndex = 0;
+    } else {
+      queue = tracks;
+      queueIndex = idx;
+    }
+
+    const startTrack = queue[queueIndex];
     setState((s) => ({
       ...s,
-      queue: tracks,
-      queueIndex: idx,
-      currentTrack: tracks[idx],
+      queue,
+      queueIndex,
+      currentTrack: startTrack,
       isPlaying: true,
       currentTime: 0,
     }));
-    loadAndPlay(tracks[idx]);
-  }, [loadAndPlay]);
+    loadAndPlayInternal(startTrack);
+  }, [loadAndPlayInternal]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
-    if (!audio || !state.currentTrack) return;
+    if (!audio || !stateRef.current.currentTrack) return;
     if (audio.paused) {
       audio.play().catch(console.error);
     } else {
       audio.pause();
     }
-  }, [state.currentTrack]);
+  }, []);
 
   const next = useCallback(() => {
-    setState((s) => {
-      const nextIndex = s.queueIndex + 1;
-      if (nextIndex < s.queue.length) {
-        queueMicrotask(() => loadAndPlay(s.queue[nextIndex]));
-        return { ...s, queueIndex: nextIndex, currentTrack: s.queue[nextIndex], isPlaying: true, currentTime: 0 };
-      }
-      return s;
-    });
-  }, [loadAndPlay]);
+    const cur = stateRef.current;
+    const nextIndex = cur.queueIndex + 1;
+    if (nextIndex < cur.queue.length) {
+      const t = cur.queue[nextIndex];
+      setState((s) => ({
+        ...s,
+        queueIndex: nextIndex,
+        currentTrack: t,
+        isPlaying: true,
+        currentTime: 0,
+      }));
+      loadAndPlayInternal(t);
+    } else if (cur.repeat === 'all' && cur.queue.length > 0) {
+      const t = cur.queue[0];
+      setState((s) => ({
+        ...s,
+        queueIndex: 0,
+        currentTrack: t,
+        isPlaying: true,
+        currentTime: 0,
+      }));
+      loadAndPlayInternal(t);
+    }
+  }, [loadAndPlayInternal]);
 
   const prev = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    // If more than 3 seconds in, restart the current track instead
     if (audio.currentTime > 3) {
       audio.currentTime = 0;
       return;
     }
-    setState((s) => {
-      const prevIndex = s.queueIndex - 1;
-      if (prevIndex >= 0) {
-        queueMicrotask(() => loadAndPlay(s.queue[prevIndex]));
-        return { ...s, queueIndex: prevIndex, currentTrack: s.queue[prevIndex], isPlaying: true, currentTime: 0 };
-      }
-      if (audioRef.current) audioRef.current.currentTime = 0;
-      return s;
-    });
-  }, [loadAndPlay]);
+    const cur = stateRef.current;
+    const prevIndex = cur.queueIndex - 1;
+    if (prevIndex >= 0) {
+      const t = cur.queue[prevIndex];
+      setState((s) => ({
+        ...s,
+        queueIndex: prevIndex,
+        currentTrack: t,
+        isPlaying: true,
+        currentTime: 0,
+      }));
+      loadAndPlayInternal(t);
+    } else {
+      // restart current
+      audio.currentTime = 0;
+    }
+  }, [loadAndPlayInternal]);
 
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
@@ -231,6 +339,134 @@ export function usePlayer() {
     setState((s) => ({ ...s, volume: clamped }));
   }, []);
 
+  /**
+   * Toggle shuffle. When turning ON: keeps the current track playing, shuffles
+   * everything else into a new order after it. When turning OFF: restores the
+   * original order, with the current track found at its original position.
+   */
+  const toggleShuffle = useCallback(() => {
+    setState((s) => {
+      const newShuffle = !s.shuffle;
+      const cur = s.currentTrack;
+      if (!cur || s.queue.length === 0) {
+        return { ...s, shuffle: newShuffle };
+      }
+
+      if (newShuffle) {
+        // turning ON: current track stays, shuffle the rest
+        const original = originalOrderRef.current.length > 0 ? originalOrderRef.current : s.queue;
+        // Remember original order based on current queue (in case it was set without going through playQueue)
+        if (originalOrderRef.current.length === 0) originalOrderRef.current = s.queue;
+        const others = original.filter((t) => t.filePath !== cur.filePath);
+        const newQueue = [cur, ...shuffleArray(others)];
+        return { ...s, shuffle: true, queue: newQueue, queueIndex: 0 };
+      } else {
+        // turning OFF: restore original order
+        const original = originalOrderRef.current.length > 0 ? originalOrderRef.current : s.queue;
+        const newIndex = original.findIndex((t) => t.filePath === cur.filePath);
+        return {
+          ...s,
+          shuffle: false,
+          queue: original,
+          queueIndex: newIndex >= 0 ? newIndex : 0,
+        };
+      }
+    });
+  }, []);
+
+  const cycleRepeat = useCallback(() => {
+    setState((s) => {
+      const next: RepeatMode = s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off';
+      return { ...s, repeat: next };
+    });
+  }, []);
+
+  /**
+   * Add a track immediately after the currently playing one. If nothing is
+   * playing, starts playing the track.
+   */
+  const addToQueueNext = useCallback((track: Track) => {
+    setState((s) => {
+      if (s.queueIndex < 0 || !s.currentTrack) {
+        // Nothing playing: start playing this track immediately
+        originalOrderRef.current = [track];
+        loadAndPlayInternal(track);
+        return {
+          ...s,
+          queue: [track],
+          queueIndex: 0,
+          currentTrack: track,
+          isPlaying: true,
+          currentTime: 0,
+        };
+      }
+      // Insert at queueIndex + 1
+      const newQueue = [
+        ...s.queue.slice(0, s.queueIndex + 1),
+        track,
+        ...s.queue.slice(s.queueIndex + 1),
+      ];
+      // Keep originalOrder in sync — append at the end so toggling shuffle later doesn't lose it
+      originalOrderRef.current = [...originalOrderRef.current, track];
+      return { ...s, queue: newQueue };
+    });
+  }, [loadAndPlayInternal]);
+
+  /**
+   * Append a track to the end of the queue.
+   */
+  const addToQueueEnd = useCallback((track: Track) => {
+    setState((s) => {
+      if (s.queueIndex < 0 || !s.currentTrack) {
+        originalOrderRef.current = [track];
+        loadAndPlayInternal(track);
+        return {
+          ...s,
+          queue: [track],
+          queueIndex: 0,
+          currentTrack: track,
+          isPlaying: true,
+          currentTime: 0,
+        };
+      }
+      originalOrderRef.current = [...originalOrderRef.current, track];
+      return { ...s, queue: [...s.queue, track] };
+    });
+  }, [loadAndPlayInternal]);
+
+  /**
+   * Remove a track from the queue by its index in the current queue order.
+   * Cannot remove the currently playing track.
+   */
+  const removeFromQueue = useCallback((idx: number) => {
+    setState((s) => {
+      if (idx === s.queueIndex || idx < 0 || idx >= s.queue.length) return s;
+      const removed = s.queue[idx];
+      const newQueue = s.queue.filter((_, i) => i !== idx);
+      const newIndex = idx < s.queueIndex ? s.queueIndex - 1 : s.queueIndex;
+      // Also remove from original order
+      originalOrderRef.current = originalOrderRef.current.filter((t) => t !== removed);
+      return { ...s, queue: newQueue, queueIndex: newIndex };
+    });
+  }, []);
+
+  /**
+   * Jump directly to a queue index.
+   */
+  const jumpToQueueIndex = useCallback((idx: number) => {
+    const cur = stateRef.current;
+    if (idx < 0 || idx >= cur.queue.length) return;
+    const t = cur.queue[idx];
+    setState((s) => ({
+      ...s,
+      queueIndex: idx,
+      currentTrack: t,
+      isPlaying: true,
+      currentTime: 0,
+    }));
+    loadAndPlayInternal(t);
+  }, [loadAndPlayInternal]);
+
   return {
     state,
     playQueue,
@@ -239,6 +475,12 @@ export function usePlayer() {
     prev,
     seek,
     setVolume,
+    toggleShuffle,
+    cycleRepeat,
+    addToQueueNext,
+    addToQueueEnd,
+    removeFromQueue,
+    jumpToQueueIndex,
   };
 }
 

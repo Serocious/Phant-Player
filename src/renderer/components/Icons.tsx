@@ -12,7 +12,9 @@ interface IconProps {
 
 export const PlayIcon: React.FC<IconProps> = ({ size = 14, className }) => (
   <svg width={size} height={size} viewBox="0 0 16 16" className={className} fill="currentColor">
-    <path d="M4 2.5v11a.5.5 0 0 0 .77.42l8.5-5.5a.5.5 0 0 0 0-.84l-8.5-5.5A.5.5 0 0 0 4 2.5z" />
+    {/* Slightly nudged right (x starts at 4.5 not 4) so the triangle's
+        visual centre lines up with the geometric centre of the icon. */}
+    <path d="M4.5 2.5v11a.5.5 0 0 0 .77.42l8.2-5.5a.5.5 0 0 0 0-.84l-8.2-5.5A.5.5 0 0 0 4.5 2.5z" />
   </svg>
 );
 
@@ -90,5 +92,58 @@ export const ChevronLeftIcon: React.FC<IconProps> = ({ size = 16, className }) =
 export const ChevronDownIcon: React.FC<IconProps> = ({ size = 12, className }) => (
   <svg width={size} height={size} viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
     <path d="M3 6l5 5 5-5" />
+  </svg>
+);
+
+export const ShuffleIcon: React.FC<IconProps> = ({ size = 16, className }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 4h2.5l2 3M14 4l-2 1.5M14 4l-2-1.5M14 4h-2.5l-7 8H2" />
+    <path d="M14 12l-2 1.5M14 12l-2-1.5M14 12h-2.5l-2-3" />
+  </svg>
+);
+
+export const RepeatIcon: React.FC<IconProps> = ({ size = 16, className }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3.5 6V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-9" />
+    <path d="M5 12L2.5 9.5 5 7" />
+  </svg>
+);
+
+export const RepeatOneIcon: React.FC<IconProps> = ({ size = 16, className }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    {/* Loop arrow, slightly shifted left to make room for the "1" */}
+    <path d="M2.5 7V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H1.5" transform="translate(0.5 0)" />
+    <path d="M4.5 13L2 10.5 4.5 8" />
+    {/* "1" badge top-right, drawn as filled circle + number */}
+    <circle cx="13" cy="3.5" r="2.6" fill="currentColor" stroke="none" />
+    <text
+      x="13"
+      y="5"
+      fontSize="4.2"
+      fontWeight="800"
+      fill="var(--bg-base)"
+      stroke="none"
+      textAnchor="middle"
+      fontFamily="system-ui, sans-serif"
+    >1</text>
+  </svg>
+);
+
+export const QueueIcon: React.FC<IconProps> = ({ size = 16, className }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 4h10M3 8h10M3 12h7" />
+    <path d="M13 12l2 1.5L13 15" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const PlusIcon: React.FC<IconProps> = ({ size = 14, className }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+    <path d="M8 3v10M3 8h10" />
+  </svg>
+);
+
+export const CloseIcon: React.FC<IconProps> = ({ size = 14, className }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+    <path d="M4 4l8 8M12 4l-8 8" />
   </svg>
 );

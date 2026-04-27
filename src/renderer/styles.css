@@ -258,7 +258,6 @@ button {
   transition: opacity 160ms ease, transform 160ms ease, background 160ms ease;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--accent-glow);
   font-size: 14px;
-  padding-left: 2px;
 }
 
 .album-play-overlay:hover {
@@ -512,7 +511,6 @@ button {
   background: var(--accent);
   color: var(--bg-base);
   font-size: 14px;
-  padding-left: 1px;
 }
 
 .player-button.play:hover {
@@ -1026,4 +1024,374 @@ button {
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
+}
+
+/* =========================================================
+   Search box
+   ========================================================= */
+
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 8px 0 30px;
+  min-width: 220px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.search-box:focus-within {
+  border-color: var(--accent-dim);
+  background: var(--bg-elevated);
+}
+
+.search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 8px 0;
+  font-family: inherit;
+}
+
+.search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.search-clear {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+  margin-right: -4px;
+  border-radius: 3px;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.search-clear:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* =========================================================
+   Content header layout — search + sort side by side
+   ========================================================= */
+
+.content-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* =========================================================
+   Inline empty state (search returned no results)
+   ========================================================= */
+
+.empty-state-inline {
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* =========================================================
+   Settings: folder picker row
+   ========================================================= */
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.folder-path {
+  background: var(--bg-base);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-family: 'Consolas', 'Cascadia Code', monospace;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* =========================================================
+   Player toggle buttons (shuffle, repeat, queue)
+   ========================================================= */
+
+.player-button.toggle {
+  position: relative;
+  color: var(--text-secondary);
+}
+
+.player-button.toggle.active {
+  color: var(--accent);
+}
+
+.player-button.toggle.active::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* =========================================================
+   Up next popup
+   ========================================================= */
+
+.up-next-button-wrapper {
+  position: relative;
+}
+
+.up-next-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background: var(--accent);
+  color: var(--bg-base);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  min-width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.up-next-popup {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  width: 360px;
+  max-height: 440px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 100;
+}
+
+.up-next-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.up-next-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+.up-next-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.up-next-close:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.up-next-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 8px 12px;
+}
+
+.up-next-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 8px 10px 4px;
+}
+
+.up-next-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.up-next-row:hover {
+  background: var(--bg-elevated);
+}
+
+.up-next-row.playing {
+  background: var(--bg-elevated);
+}
+
+.up-next-row.playing .up-next-track-title {
+  color: var(--accent-bright);
+}
+
+.up-next-cover {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-base);
+  flex-shrink: 0;
+}
+
+.up-next-cover-img {
+  width: 100%;
+  height: 100%;
+}
+
+.up-next-cover-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.up-next-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.up-next-track-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.up-next-track-artist {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.up-next-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 100ms ease, color 100ms ease, background 100ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.up-next-row:hover .up-next-remove {
+  opacity: 1;
+}
+
+.up-next-remove:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.up-next-empty {
+  padding: 24px 14px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* =========================================================
+   Context menu (right-click)
+   ========================================================= */
+
+.context-menu {
+  position: fixed;
+  min-width: 180px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+  z-index: 1000;
+  user-select: none;
+}
+
+.context-menu-item {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 80ms ease;
+}
+
+.context-menu-item:hover {
+  background: var(--bg-elevated);
+}
+
+.context-menu-item.disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  background: transparent !important;
+}
+
+.context-menu-item.danger {
+  color: #ff6b6b;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* =========================================================
+   Player layout adjustment for the extra buttons
+   ========================================================= */
+
+.player-buttons {
+  gap: 8px;
 }

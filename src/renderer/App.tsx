@@ -3,10 +3,14 @@ import type { Album, Track, Artist, ScanProgress, LastfmStatus } from '../shared
 import { usePlayer, formatTime } from './hooks/usePlayer';
 import { useMediaSession } from './hooks/useMediaSession';
 import { AlbumCover } from './components/AlbumCover';
+import { SearchBox } from './components/SearchBox';
+import { ContextMenu, type ContextMenuEntry } from './components/ContextMenu';
+import { UpNextPopup } from './components/UpNextPopup';
 import {
   PlayIcon, PauseIcon, PrevIcon, NextIcon, VolumeIcon,
   AlbumsIcon, SongsIcon, ArtistsIcon,
   RescanIcon, SettingsIcon, ChevronLeftIcon, ChevronDownIcon,
+  ShuffleIcon, RepeatIcon, RepeatOneIcon, QueueIcon,
 } from './components/Icons';
 import logoUrl from './assets/logo.png';
 
@@ -37,6 +41,7 @@ export default function App() {
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuEntry[] } | null>(null);
 
   useMediaSession(player.state, {
     togglePlay: player.togglePlay,
@@ -44,6 +49,24 @@ export default function App() {
     prev: player.prev,
     seek: player.seek,
   });
+
+  const handleTrackContextMenu = useCallback(
+    (e: React.MouseEvent, track: Track) => {
+      e.preventDefault();
+      const items: ContextMenuEntry[] = [
+        {
+          label: 'Play next',
+          onClick: () => player.addToQueueNext(track),
+        },
+        {
+          label: 'Add to queue',
+          onClick: () => player.addToQueueEnd(track),
+        },
+      ];
+      setContextMenu({ x: e.clientX, y: e.clientY, items });
+    },
+    [player]
+  );
 
   useEffect(() => {
     (async () => {
@@ -81,12 +104,17 @@ export default function App() {
     }
   }, []);
 
-  const handleSetup = useCallback(async () => {
-    const folder = 'E:\\Music';
+  const handleSetup = useCallback(async (folder: string) => {
     await window.api.setSetting('musicFolder', folder);
     setMusicFolder(folder);
     setNeedsSetup(false);
     await runScan(folder);
+  }, [runScan]);
+
+  const handleChangeFolder = useCallback(async (newFolder: string) => {
+    await window.api.setSetting('musicFolder', newFolder);
+    setMusicFolder(newFolder);
+    await runScan(newFolder);
   }, [runScan]);
 
   const handleRescan = useCallback(() => {
@@ -129,19 +157,24 @@ export default function App() {
             <SongsView
               currentTrackPath={player.state.currentTrack?.filePath ?? null}
               onPlayTracks={(tracks, idx) => player.playQueue(tracks, idx)}
+              onTrackContextMenu={handleTrackContextMenu}
             />
           ) : view.kind === 'artists' ? (
             <ArtistsView
               onOpen={(a) => setView({ kind: 'artist-detail', artist: a })}
             />
           ) : view.kind === 'settings' ? (
-            <SettingsView />
+            <SettingsView
+              musicFolder={musicFolder}
+              onChangeFolder={handleChangeFolder}
+            />
           ) : view.kind === 'album-detail' ? (
             <AlbumDetailView
               album={view.album}
               onBack={() => setView({ kind: 'albums' })}
               onPlayTrack={(tracks, idx) => player.playQueue(tracks, idx)}
               currentTrackPath={player.state.currentTrack?.filePath ?? null}
+              onTrackContextMenu={handleTrackContextMenu}
             />
           ) : view.kind === 'artist-detail' ? (
             <ArtistDetailView
@@ -158,6 +191,15 @@ export default function App() {
       </div>
 
       <PlayerBar player={player} />
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenu.items}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 }
@@ -216,14 +258,28 @@ function Sidebar({
 
 /* ---------- Setup screen ---------- */
 
-function SetupScreen({ onSetup }: { onSetup: () => void }) {
+function SetupScreen({ onSetup }: { onSetup: (folder: string) => void }) {
+  const [picking, setPicking] = useState(false);
+
+  const handlePick = async () => {
+    setPicking(true);
+    try {
+      const folder = await window.api.pickFolder();
+      if (folder) onSetup(folder);
+    } finally {
+      setPicking(false);
+    }
+  };
+
   return (
     <div className="empty-state">
       <div className="empty-state-title">Welcome to Phant</div>
       <div className="empty-state-text">
-        Your library will be loaded from <code>E:\Music</code>. Click below to scan it for the first time.
+        Choose your music folder to get started. Phant will scan it for MP3, FLAC, and other audio files.
       </div>
-      <button className="btn" onClick={onSetup}>Scan library</button>
+      <button className="btn" onClick={handlePick} disabled={picking}>
+        {picking ? 'Choosing…' : 'Choose music folder'}
+      </button>
     </div>
   );
 }
@@ -297,9 +353,18 @@ function AlbumsView({
   onPlayAlbum: (a: Album) => void;
 }) {
   const [sort, setSort] = useState<AlbumSort>('artist');
+  const [query, setQuery] = useState('');
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return albums;
+    const q = query.toLowerCase();
+    return albums.filter((a) =>
+      a.name.toLowerCase().includes(q) || a.artist.toLowerCase().includes(q)
+    );
+  }, [albums, query]);
 
   const sorted = useMemo(() => {
-    const copy = [...albums];
+    const copy = [...filtered];
     const cmp = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' });
     switch (sort) {
       case 'artist':
@@ -316,7 +381,7 @@ function AlbumsView({
         break;
     }
     return copy;
-  }, [albums, sort]);
+  }, [filtered, sort]);
 
   if (albums.length === 0) {
     return (
@@ -332,40 +397,49 @@ function AlbumsView({
       <div className="content-header">
         <div>
           <div className="content-title">Albums</div>
-          <div className="content-subtitle">{albums.length} albums</div>
+          <div className="content-subtitle">
+            {query ? `${sorted.length} of ${albums.length}` : `${albums.length} albums`}
+          </div>
         </div>
-        <SortDropdown
-          value={sort}
-          onChange={(v) => setSort(v as AlbumSort)}
-          options={Object.entries(ALBUM_SORT_LABELS).map(([value, label]) => ({ value, label }))}
-        />
+        <div className="content-header-controls">
+          <SearchBox value={query} onChange={setQuery} placeholder="Search albums…" />
+          <SortDropdown
+            value={sort}
+            onChange={(v) => setSort(v as AlbumSort)}
+            options={Object.entries(ALBUM_SORT_LABELS).map(([value, label]) => ({ value, label }))}
+          />
+        </div>
       </div>
 
-      <div className="album-grid">
-        {sorted.map((a) => (
-          <div
-            key={`${a.artist}:::${a.name}`}
-            className="album-card"
-            onClick={() => onOpen(a)}
-          >
-            <div className="album-cover-wrapper">
-              <AlbumCover trackPath={a.firstTrackPath} alt={a.name} className="album-cover" />
-              <div
-                className="album-play-overlay"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onPlayAlbum(a);
-                }}
-                title="Play album"
-              >
-                <PlayIcon size={14} />
+      {sorted.length === 0 ? (
+        <div className="empty-state-inline">No matches for "{query}"</div>
+      ) : (
+        <div className="album-grid">
+          {sorted.map((a) => (
+            <div
+              key={`${a.artist}:::${a.name}`}
+              className="album-card"
+              onClick={() => onOpen(a)}
+            >
+              <div className="album-cover-wrapper">
+                <AlbumCover trackPath={a.firstTrackPath} alt={a.name} className="album-cover" />
+                <div
+                  className="album-play-overlay"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPlayAlbum(a);
+                  }}
+                  title="Play album"
+                >
+                  <PlayIcon size={14} />
+                </div>
               </div>
+              <div className="album-name">{a.name}</div>
+              <div className="album-artist">{a.artist}</div>
             </div>
-            <div className="album-name">{a.name}</div>
-            <div className="album-artist">{a.artist}</div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -383,13 +457,16 @@ const SONG_SORT_LABELS: Record<SongSort, string> = {
 function SongsView({
   currentTrackPath,
   onPlayTracks,
+  onTrackContextMenu,
 }: {
   currentTrackPath: string | null;
   onPlayTracks: (tracks: Track[], idx: number) => void;
+  onTrackContextMenu: (e: React.MouseEvent, track: Track) => void;
 }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [sort, setSort] = useState<SongSort>('title');
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -399,9 +476,19 @@ function SongsView({
     });
   }, []);
 
+  const filtered = useMemo(() => {
+    if (!query.trim()) return tracks;
+    const q = query.toLowerCase();
+    return tracks.filter((t) =>
+      t.title.toLowerCase().includes(q) ||
+      t.artist.toLowerCase().includes(q) ||
+      t.album.toLowerCase().includes(q)
+    );
+  }, [tracks, query]);
+
   const sorted = useMemo(() => {
     const cmp = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' });
-    const copy = [...tracks];
+    const copy = [...filtered];
     switch (sort) {
       case 'title': copy.sort((a, b) => cmp(a.title, b.title)); break;
       case 'artist': copy.sort((a, b) => cmp(a.artist, b.artist) || cmp(a.album, b.album) || a.trackNumber - b.trackNumber); break;
@@ -409,7 +496,7 @@ function SongsView({
       case 'duration': copy.sort((a, b) => b.duration - a.duration); break;
     }
     return copy;
-  }, [tracks, sort]);
+  }, [filtered, sort]);
 
   return (
     <>
@@ -417,43 +504,51 @@ function SongsView({
         <div>
           <div className="content-title">Songs</div>
           <div className="content-subtitle">
-            {loading ? 'Loading...' : `${tracks.length} songs`}
+            {loading ? 'Loading...' : query ? `${sorted.length} of ${tracks.length}` : `${tracks.length} songs`}
           </div>
         </div>
-        <SortDropdown
-          value={sort}
-          onChange={(v) => setSort(v as SongSort)}
-          options={Object.entries(SONG_SORT_LABELS).map(([value, label]) => ({ value, label }))}
-        />
+        <div className="content-header-controls">
+          <SearchBox value={query} onChange={setQuery} placeholder="Search songs…" />
+          <SortDropdown
+            value={sort}
+            onChange={(v) => setSort(v as SongSort)}
+            options={Object.entries(SONG_SORT_LABELS).map(([value, label]) => ({ value, label }))}
+          />
+        </div>
       </div>
 
-      <div className="track-list track-list-wide">
-        <div className="track-list-header track-row-wide">
-          <div></div>
-          <div>Title</div>
-          <div>Artist</div>
-          <div>Album</div>
-          <div style={{ textAlign: 'right' }}>Time</div>
-        </div>
-        {sorted.map((t, i) => {
-          const playing = currentTrackPath === t.filePath;
-          return (
-            <div
-              key={t.id}
-              className={`track-row track-row-wide ${playing ? 'playing' : ''}`}
-              onDoubleClick={() => onPlayTracks(sorted, i)}
-            >
-              <div className="track-row-cover">
-                <AlbumCover trackPath={t.filePath} alt={t.album} className="track-row-cover-img" />
+      {sorted.length === 0 && !loading ? (
+        <div className="empty-state-inline">{query ? `No matches for "${query}"` : 'No songs found.'}</div>
+      ) : (
+        <div className="track-list track-list-wide">
+          <div className="track-list-header track-row-wide">
+            <div></div>
+            <div>Title</div>
+            <div>Artist</div>
+            <div>Album</div>
+            <div style={{ textAlign: 'right' }}>Time</div>
+          </div>
+          {sorted.map((t, i) => {
+            const playing = currentTrackPath === t.filePath;
+            return (
+              <div
+                key={t.id}
+                className={`track-row track-row-wide ${playing ? 'playing' : ''}`}
+                onDoubleClick={() => onPlayTracks(sorted, i)}
+                onContextMenu={(e) => onTrackContextMenu(e, t)}
+              >
+                <div className="track-row-cover">
+                  <AlbumCover trackPath={t.filePath} alt={t.album} className="track-row-cover-img" />
+                </div>
+                <div className="track-title">{t.title}</div>
+                <div className="track-secondary">{t.artist}</div>
+                <div className="track-secondary">{t.album}</div>
+                <div className="track-time">{formatTime(t.duration)}</div>
               </div>
-              <div className="track-title">{t.title}</div>
-              <div className="track-secondary">{t.artist}</div>
-              <div className="track-secondary">{t.album}</div>
-              <div className="track-time">{formatTime(t.duration)}</div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </>
   );
 }
@@ -463,6 +558,7 @@ function SongsView({
 function ArtistsView({ onOpen }: { onOpen: (a: Artist) => void }) {
   const [artists, setArtists] = useState<Artist[]>([]);
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -472,30 +568,43 @@ function ArtistsView({ onOpen }: { onOpen: (a: Artist) => void }) {
     });
   }, []);
 
+  const filtered = useMemo(() => {
+    if (!query.trim()) return artists;
+    const q = query.toLowerCase();
+    return artists.filter((a) => a.name.toLowerCase().includes(q));
+  }, [artists, query]);
+
   return (
     <>
       <div className="content-header">
         <div>
           <div className="content-title">Artists</div>
           <div className="content-subtitle">
-            {loading ? 'Loading...' : `${artists.length} artists`}
+            {loading ? 'Loading...' : query ? `${filtered.length} of ${artists.length}` : `${artists.length} artists`}
           </div>
+        </div>
+        <div className="content-header-controls">
+          <SearchBox value={query} onChange={setQuery} placeholder="Search artists…" />
         </div>
       </div>
 
-      <div className="artist-grid">
-        {artists.map((a) => (
-          <div
-            key={a.name}
-            className="artist-card"
-            onClick={() => onOpen(a)}
-          >
-            <AlbumCover trackPath={a.representativeTrackPath} alt={a.name} className="artist-cover" />
-            <div className="artist-name">{a.name}</div>
-            <div className="artist-meta">{a.albumCount} {a.albumCount === 1 ? 'album' : 'albums'} • {a.trackCount} tracks</div>
-          </div>
-        ))}
-      </div>
+      {filtered.length === 0 && !loading ? (
+        <div className="empty-state-inline">{query ? `No matches for "${query}"` : 'No artists found.'}</div>
+      ) : (
+        <div className="artist-grid">
+          {filtered.map((a) => (
+            <div
+              key={a.name}
+              className="artist-card"
+              onClick={() => onOpen(a)}
+            >
+              <AlbumCover trackPath={a.representativeTrackPath} alt={a.name} className="artist-cover" />
+              <div className="artist-name">{a.name}</div>
+              <div className="artist-meta">{a.albumCount} {a.albumCount === 1 ? 'album' : 'albums'} • {a.trackCount} tracks</div>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -567,7 +676,13 @@ function ArtistDetailView({
 
 /* ---------- Settings ---------- */
 
-function SettingsView() {
+function SettingsView({
+  musicFolder,
+  onChangeFolder,
+}: {
+  musicFolder: string | null;
+  onChangeFolder: (folder: string) => void;
+}) {
   const [status, setStatus] = useState<LastfmStatus | null>(null);
   const [authStep, setAuthStep] = useState<'idle' | 'awaiting-browser' | 'completing'>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -581,6 +696,13 @@ function SettingsView() {
     refresh();
     window.api.getUserDataPath().then(setUserDataPath);
   }, [refresh]);
+
+  const handlePickFolder = useCallback(async () => {
+    const folder = await window.api.pickFolder(musicFolder || undefined);
+    if (folder && folder !== musicFolder) {
+      onChangeFolder(folder);
+    }
+  }, [musicFolder, onChangeFolder]);
 
   const handleStartAuth = useCallback(async () => {
     setError(null);
@@ -615,6 +737,17 @@ function SettingsView() {
     <>
       <div className="content-header">
         <div className="content-title">Settings</div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Music folder</div>
+        <div className="settings-info">
+          <p>Phant scans this folder for audio files. Changing it will re-scan your library.</p>
+          <div className="folder-row">
+            <code className="folder-path">{musicFolder || 'Not set'}</code>
+            <button className="btn btn-secondary" onClick={handlePickFolder}>Change…</button>
+          </div>
+        </div>
       </div>
 
       <div className="settings-section">
@@ -671,11 +804,13 @@ function AlbumDetailView({
   onBack,
   onPlayTrack,
   currentTrackPath,
+  onTrackContextMenu,
 }: {
   album: Album;
   onBack: () => void;
   onPlayTrack: (tracks: Track[], idx: number) => void;
   currentTrackPath: string | null;
+  onTrackContextMenu: (e: React.MouseEvent, track: Track) => void;
 }) {
   const [tracks, setTracks] = useState<Track[]>([]);
 
@@ -728,6 +863,7 @@ function AlbumDetailView({
               key={t.id}
               className={`track-row ${playing ? 'playing' : ''}`}
               onDoubleClick={() => onPlayTrack(tracks, i)}
+              onContextMenu={(e) => onTrackContextMenu(e, t)}
             >
               <div className="track-num">{playing ? <PlayIcon size={11} /> : t.trackNumber || i + 1}</div>
               <div>
@@ -748,9 +884,10 @@ function AlbumDetailView({
 /* ---------- Player bar ---------- */
 
 function PlayerBar({ player }: { player: ReturnType<typeof usePlayer> }) {
-  const { state, togglePlay, next, prev, seek, setVolume } = player;
+  const { state, togglePlay, next, prev, seek, setVolume, toggleShuffle, cycleRepeat, jumpToQueueIndex, removeFromQueue } = player;
   const t = state.currentTrack;
   const pct = state.duration > 0 ? (state.currentTime / state.duration) * 100 : 0;
+  const [upNextOpen, setUpNextOpen] = useState(false);
 
   const onSeekClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!state.duration) return;
@@ -764,6 +901,9 @@ function PlayerBar({ player }: { player: ReturnType<typeof usePlayer> }) {
     const ratio = (e.clientX - rect.left) / rect.width;
     setVolume(ratio);
   };
+
+  const repeatLabel = state.repeat === 'off' ? 'Repeat: off' : state.repeat === 'all' ? 'Repeat: all' : 'Repeat: one';
+  const upcomingCount = Math.max(0, state.queue.length - state.queueIndex - 1);
 
   return (
     <div className="player">
@@ -783,6 +923,14 @@ function PlayerBar({ player }: { player: ReturnType<typeof usePlayer> }) {
 
       <div className="player-controls">
         <div className="player-buttons">
+          <button
+            className={`player-button toggle ${state.shuffle ? 'active' : ''}`}
+            onClick={toggleShuffle}
+            aria-label="Shuffle"
+            title={state.shuffle ? 'Shuffle: on' : 'Shuffle: off'}
+          >
+            <ShuffleIcon />
+          </button>
           <button className="player-button" onClick={prev} disabled={!t} aria-label="Previous">
             <PrevIcon />
           </button>
@@ -791,6 +939,14 @@ function PlayerBar({ player }: { player: ReturnType<typeof usePlayer> }) {
           </button>
           <button className="player-button" onClick={next} disabled={!t} aria-label="Next">
             <NextIcon />
+          </button>
+          <button
+            className={`player-button toggle ${state.repeat !== 'off' ? 'active' : ''}`}
+            onClick={cycleRepeat}
+            aria-label={repeatLabel}
+            title={repeatLabel}
+          >
+            {state.repeat === 'one' ? <RepeatOneIcon /> : <RepeatIcon />}
           </button>
         </div>
         <div className="player-progress">
@@ -803,6 +959,26 @@ function PlayerBar({ player }: { player: ReturnType<typeof usePlayer> }) {
       </div>
 
       <div className="player-extras">
+        <div className="up-next-button-wrapper">
+          <button
+            className={`player-button toggle ${upNextOpen ? 'active' : ''}`}
+            onClick={() => setUpNextOpen(!upNextOpen)}
+            aria-label="Up next"
+            title="Up next"
+          >
+            <QueueIcon />
+            {upcomingCount > 0 && <span className="up-next-badge">{upcomingCount}</span>}
+          </button>
+          {upNextOpen && (
+            <UpNextPopup
+              queue={state.queue}
+              queueIndex={state.queueIndex}
+              onClose={() => setUpNextOpen(false)}
+              onJump={jumpToQueueIndex}
+              onRemove={removeFromQueue}
+            />
+          )}
+        </div>
         <div className="volume">
           <VolumeIcon />
           <div className="volume-bar" onClick={onVolumeClick}>
