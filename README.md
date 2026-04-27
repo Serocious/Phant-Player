@@ -76,13 +76,6 @@ run. Click "More info" → "Run anyway".
 
 `config.json` is gitignored.
 
-## Discord rich presence
-
-Phant doesn't talk to Discord directly. Instead it registers with the Windows
-System Media Transport Controls (SMTC). Install
-[Music Presence](https://github.com/ungive/discord-music-presence), and it
-will pick up Phant automatically.
-
 ## Project layout
 
 ```
