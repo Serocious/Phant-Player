@@ -29,6 +29,12 @@ and integrates with Last.fm and the Windows System Media Transport Controls.
 - music-metadata for tag and embedded-art parsing
 - electron-builder for the Windows installer
 
+## Download
+
+Pre-built Windows installer: [latest release](https://github.com/Serocious/Phant-Player/releases/latest).
+
+The build is unsigned, so Windows SmartScreen will warn the first time it's run. Click "More info" → "Run anyway".
+
 ## Running from source
 
 ```bash
