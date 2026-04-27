@@ -7,7 +7,7 @@ displays albums in an Apple Music-style grid, plays MP3/FLAC/M4A/OGG/Opus/WAV,
 and integrates with Last.fm and the Windows System Media Transport Controls
 (so Discord rich presence works through Music Presence with no extra setup).
 
-![Phant screenshot — TODO replace this line with an actual screenshot]()
+![Phant screenshot](https://serocious.s-ul.eu/ezHWTG4b)
 
 ## Features
 
