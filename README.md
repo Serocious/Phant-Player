@@ -4,8 +4,7 @@ A modern, pure-dark, periwinkle-accented local music player for Windows.
 
 Built because MusicBee's interface felt dated. Phant scans a music folder,
 displays albums in an Apple Music-style grid, plays MP3/FLAC/M4A/OGG/Opus/WAV,
-and integrates with Last.fm and the Windows System Media Transport Controls
-(so Discord rich presence works through Music Presence with no extra setup).
+and integrates with Last.fm and the Windows System Media Transport Controls.
 
 ![Phant screenshot](https://serocious.s-ul.eu/ezHWTG4b)
 
@@ -18,7 +17,7 @@ and integrates with Last.fm and the Windows System Media Transport Controls
 - Now-playing bar with play / pause / next / previous / seek / volume
 - **Last.fm scrobbling** — follows the official scrobble rule (track ≥30s,
   played for either 4 minutes or 50% of duration)
-- **Windows SMTC integration** — Discord Music Presence, Bluetooth headphone
+- **Windows SMTC integration** — Bluetooth headphone
   media keys, Windows volume overlay, and lock screen all just work
 - Local SQLite library cache (pure JavaScript, no native compilation)
 
