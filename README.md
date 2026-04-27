@@ -4,13 +4,14 @@ A modern, pure-dark, periwinkle-accented local music player for Windows.
 
 Built because MusicBee's interface felt dated. Phant scans a music folder,
 displays albums in an Apple Music-style grid, plays MP3/FLAC/M4A/OGG/Opus/WAV,
-and integrates with Last.fm and the Windows System Media Transport Controls.
+and integrates with Last.fm and the Windows System Media Transport Controls
+(so Discord rich presence works through Music Presence with no extra setup).
 
-![Phant screenshot](https://serocious.s-ul.eu/aPuz0yKE)
+![Phant screenshot — TODO replace this line with an actual screenshot]()
 
 ## Disclaimer
 
-This is a personal project, and not intended to be commercialised. I do no have any rights to `Phant` and elements were used with the sole purpose of honouring Taishi's works.
+This is a personal project, and not intended to be commercialised. I do not have any rights to `Phant`, and elements were used with the sole purpose of honouring Taishi's works.
 
 ## Features
 
@@ -21,7 +22,7 @@ This is a personal project, and not intended to be commercialised. I do no have 
 - Now-playing bar with play / pause / next / previous / seek / volume
 - **Last.fm scrobbling** — follows the official scrobble rule (track ≥30s,
   played for either 4 minutes or 50% of duration)
-- **Windows SMTC integration** — Bluetooth headphone
+- **Windows SMTC integration** — Discord Music Presence, Bluetooth headphone
   media keys, Windows volume overlay, and lock screen all just work
 - Local SQLite library cache (pure JavaScript, no native compilation)
 
@@ -32,12 +33,6 @@ This is a personal project, and not intended to be commercialised. I do no have 
 - sql.js for the library database (no native compilation needed)
 - music-metadata for tag and embedded-art parsing
 - electron-builder for the Windows installer
-
-## Download
-
-Pre-built Windows installer: [latest release](https://github.com/Serocious/Phant-Player/releases/latest).
-
-The build is unsigned, so Windows SmartScreen will warn the first time it's run. Click "More info" → "Run anyway".
 
 ## Running from source
 
@@ -84,6 +79,13 @@ run. Click "More info" → "Run anyway".
    the browser, and click **"I've authorised — complete connection"**.
 
 `config.json` is gitignored.
+
+## Discord rich presence
+
+Phant doesn't talk to Discord directly. Instead it registers with the Windows
+System Media Transport Controls (SMTC). Install
+[Music Presence](https://github.com/ungive/discord-music-presence), and it
+will pick up Phant automatically.
 
 ## Project layout
 

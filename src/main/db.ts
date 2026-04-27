@@ -84,6 +84,11 @@ export async function initDb(): Promise<Database> {
       key TEXT PRIMARY KEY,
       value TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS favourites (
+      filePath TEXT PRIMARY KEY,
+      addedAt INTEGER NOT NULL
+    );
   `);
 
   return db;

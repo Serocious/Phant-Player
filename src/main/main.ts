@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs';
 
@@ -182,6 +182,17 @@ function setupIpc() {
 
   ipcMain.handle(IPC.GET_USER_DATA_PATH, () => app.getPath('userData'));
 
+  ipcMain.handle(IPC.PICK_FOLDER, async (_evt, defaultPath?: string): Promise<string | null> => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose music folder',
+      defaultPath: defaultPath || undefined,
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
   ipcMain.handle(IPC.LIBRARY_SCAN, async (_evt, rootDir: string) => {
     if (!mainWindow) throw new Error('No window');
     return scanLibrary(rootDir, mainWindow);
@@ -263,6 +274,34 @@ function setupIpc() {
       artPath: null,
       firstTrackPath: r.firstTrackPath,
     }));
+  });
+
+  // ---- Favourites ----
+  ipcMain.handle(IPC.FAVOURITES_GET_ALL, (): string[] => {
+    const rows = all<{ filePath: string }>('SELECT filePath FROM favourites');
+    return rows.map((r) => r.filePath);
+  });
+
+  ipcMain.handle(IPC.FAVOURITES_GET_TRACKS, (): Track[] => {
+    return all<Track>(`
+      SELECT t.*
+      FROM tracks t
+      INNER JOIN favourites f ON f.filePath = t.filePath
+      ORDER BY f.addedAt DESC
+    `);
+  });
+
+  ipcMain.handle(IPC.FAVOURITES_ADD, (_evt, filePath: string) => {
+    run(
+      'INSERT OR IGNORE INTO favourites (filePath, addedAt) VALUES (?, ?)',
+      [filePath, Date.now()]
+    );
+    return true;
+  });
+
+  ipcMain.handle(IPC.FAVOURITES_REMOVE, (_evt, filePath: string) => {
+    run('DELETE FROM favourites WHERE filePath = ?', [filePath]);
+    return true;
   });
 
   ipcMain.handle(IPC.LIBRARY_GET_ALBUM_ART, async (_evt, trackFilePath: string): Promise<string | null> => {

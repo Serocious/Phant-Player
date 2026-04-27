@@ -9,11 +9,16 @@ declare global {
       getAllTracks: () => Promise<Track[]>;
       getArtists: () => Promise<Artist[]>;
       getAlbumsByArtist: (artistName: string) => Promise<Album[]>;
+      favouritesGetAll: () => Promise<string[]>;
+      favouritesGetTracks: () => Promise<Track[]>;
+      favouritesAdd: (filePath: string) => Promise<boolean>;
+      favouritesRemove: (filePath: string) => Promise<boolean>;
       getAlbumArt: (trackFilePath: string) => Promise<string | null>;
       getTrackFileUrl: (filePath: string) => Promise<string>;
       getSetting: <T = any>(key: string) => Promise<T | null>;
       setSetting: (key: string, value: any) => Promise<boolean>;
       getUserDataPath: () => Promise<string>;
+      pickFolder: (defaultPath?: string) => Promise<string | null>;
       onScanProgress: (cb: (p: ScanProgress) => void) => () => void;
 
       lastfmStatus: () => Promise<LastfmStatus>;

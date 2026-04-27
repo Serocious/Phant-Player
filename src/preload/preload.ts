@@ -20,6 +20,18 @@ const api = {
   getAlbumsByArtist: (artistName: string): Promise<Album[]> =>
     ipcRenderer.invoke(IPC.LIBRARY_GET_ALBUMS_BY_ARTIST, artistName),
 
+  favouritesGetAll: (): Promise<string[]> =>
+    ipcRenderer.invoke(IPC.FAVOURITES_GET_ALL),
+
+  favouritesGetTracks: (): Promise<Track[]> =>
+    ipcRenderer.invoke(IPC.FAVOURITES_GET_TRACKS),
+
+  favouritesAdd: (filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.FAVOURITES_ADD, filePath),
+
+  favouritesRemove: (filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.FAVOURITES_REMOVE, filePath),
+
   getAlbumArt: (trackFilePath: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.LIBRARY_GET_ALBUM_ART, trackFilePath),
 
@@ -34,6 +46,9 @@ const api = {
 
   getUserDataPath: (): Promise<string> =>
     ipcRenderer.invoke(IPC.GET_USER_DATA_PATH),
+
+  pickFolder: (defaultPath?: string): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.PICK_FOLDER, defaultPath),
 
   onScanProgress: (cb: (p: ScanProgress) => void) => {
     const listener = (_evt: any, p: ScanProgress) => cb(p);

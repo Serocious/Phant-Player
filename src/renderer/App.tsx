@@ -2,24 +2,28 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import type { Album, Track, Artist, ScanProgress, LastfmStatus } from '../shared/types';
 import { usePlayer, formatTime } from './hooks/usePlayer';
 import { useMediaSession } from './hooks/useMediaSession';
+import { useFavourites } from './hooks/useFavourites';
 import { AlbumCover } from './components/AlbumCover';
 import { SearchBox } from './components/SearchBox';
 import { ContextMenu, type ContextMenuEntry } from './components/ContextMenu';
 import { UpNextPopup } from './components/UpNextPopup';
+import { FavouriteButton } from './components/FavouriteButton';
 import {
   PlayIcon, PauseIcon, PrevIcon, NextIcon, VolumeIcon,
   AlbumsIcon, SongsIcon, ArtistsIcon,
   RescanIcon, SettingsIcon, ChevronLeftIcon, ChevronDownIcon,
   ShuffleIcon, RepeatIcon, RepeatOneIcon, QueueIcon,
+  HeartIcon,
 } from './components/Icons';
 import logoUrl from './assets/logo.png';
 
-type ViewKind = 'albums' | 'songs' | 'artists' | 'settings' | 'album-detail' | 'artist-detail';
+type ViewKind = 'albums' | 'songs' | 'artists' | 'favourites' | 'settings' | 'album-detail' | 'artist-detail';
 
 type View =
   | { kind: 'albums' }
   | { kind: 'songs' }
   | { kind: 'artists' }
+  | { kind: 'favourites' }
   | { kind: 'settings' }
   | { kind: 'album-detail'; album: Album }
   | { kind: 'artist-detail'; artist: Artist };
@@ -35,6 +39,7 @@ const ALBUM_SORT_LABELS: Record<AlbumSort, string> = {
 
 export default function App() {
   const player = usePlayer();
+  const favourites = useFavourites();
   const [musicFolder, setMusicFolder] = useState<string | null>(null);
   const [albums, setAlbums] = useState<Album[]>([]);
   const [view, setView] = useState<View>({ kind: 'albums' });
@@ -53,6 +58,7 @@ export default function App() {
   const handleTrackContextMenu = useCallback(
     (e: React.MouseEvent, track: Track) => {
       e.preventDefault();
+      const isFav = favourites.isFavourite(track.filePath);
       const items: ContextMenuEntry[] = [
         {
           label: 'Play next',
@@ -62,10 +68,15 @@ export default function App() {
           label: 'Add to queue',
           onClick: () => player.addToQueueEnd(track),
         },
+        { divider: true },
+        {
+          label: isFav ? 'Remove from favourites' : 'Add to favourites',
+          onClick: () => favourites.toggle(track.filePath),
+        },
       ];
       setContextMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [player]
+    [player, favourites]
   );
 
   useEffect(() => {
@@ -121,7 +132,7 @@ export default function App() {
     if (musicFolder) runScan(musicFolder);
   }, [musicFolder, runScan]);
 
-  const navigate = useCallback((kind: 'albums' | 'songs' | 'artists' | 'settings') => {
+  const navigate = useCallback((kind: 'albums' | 'songs' | 'artists' | 'favourites' | 'settings') => {
     setView({ kind } as View);
   }, []);
 
@@ -158,10 +169,18 @@ export default function App() {
               currentTrackPath={player.state.currentTrack?.filePath ?? null}
               onPlayTracks={(tracks, idx) => player.playQueue(tracks, idx)}
               onTrackContextMenu={handleTrackContextMenu}
+              favourites={favourites}
             />
           ) : view.kind === 'artists' ? (
             <ArtistsView
               onOpen={(a) => setView({ kind: 'artist-detail', artist: a })}
+            />
+          ) : view.kind === 'favourites' ? (
+            <FavouritesView
+              currentTrackPath={player.state.currentTrack?.filePath ?? null}
+              onPlayTracks={(tracks, idx) => player.playQueue(tracks, idx)}
+              onTrackContextMenu={handleTrackContextMenu}
+              favourites={favourites}
             />
           ) : view.kind === 'settings' ? (
             <SettingsView
@@ -175,6 +194,7 @@ export default function App() {
               onPlayTrack={(tracks, idx) => player.playQueue(tracks, idx)}
               currentTrackPath={player.state.currentTrack?.filePath ?? null}
               onTrackContextMenu={handleTrackContextMenu}
+              favourites={favourites}
             />
           ) : view.kind === 'artist-detail' ? (
             <ArtistDetailView
@@ -190,7 +210,7 @@ export default function App() {
         </div>
       </div>
 
-      <PlayerBar player={player} />
+      <PlayerBar player={player} favourites={favourites} />
 
       {contextMenu && (
         <ContextMenu
@@ -213,11 +233,11 @@ function Sidebar({
   isScanning,
 }: {
   activeView: ViewKind;
-  onNavigate: (v: 'albums' | 'songs' | 'artists' | 'settings') => void;
+  onNavigate: (v: 'albums' | 'songs' | 'artists' | 'favourites' | 'settings') => void;
   onRescan: () => void;
   isScanning: boolean;
 }) {
-  const navItem = (kind: 'albums' | 'songs' | 'artists', icon: React.ReactNode, label: string) => (
+  const navItem = (kind: 'albums' | 'songs' | 'artists' | 'favourites', icon: React.ReactNode, label: string) => (
     <div
       className={`nav-item ${activeView === kind ? 'active' : ''}`}
       onClick={() => onNavigate(kind)}
@@ -233,6 +253,7 @@ function Sidebar({
       {navItem('albums', <AlbumsIcon />, 'Albums')}
       {navItem('songs', <SongsIcon />, 'Songs')}
       {navItem('artists', <ArtistsIcon />, 'Artists')}
+      {navItem('favourites', <HeartIcon size={16} />, 'Favourites')}
 
       <div style={{ flex: 1 }} />
 
@@ -458,10 +479,12 @@ function SongsView({
   currentTrackPath,
   onPlayTracks,
   onTrackContextMenu,
+  favourites,
 }: {
   currentTrackPath: string | null;
   onPlayTracks: (tracks: Track[], idx: number) => void;
   onTrackContextMenu: (e: React.MouseEvent, track: Track) => void;
+  favourites: ReturnType<typeof useFavourites>;
 }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [sort, setSort] = useState<SongSort>('title');
@@ -526,10 +549,12 @@ function SongsView({
             <div>Title</div>
             <div>Artist</div>
             <div>Album</div>
+            <div></div>
             <div style={{ textAlign: 'right' }}>Time</div>
           </div>
           {sorted.map((t, i) => {
             const playing = currentTrackPath === t.filePath;
+            const isFav = favourites.isFavourite(t.filePath);
             return (
               <div
                 key={t.id}
@@ -543,6 +568,13 @@ function SongsView({
                 <div className="track-title">{t.title}</div>
                 <div className="track-secondary">{t.artist}</div>
                 <div className="track-secondary">{t.album}</div>
+                <div className="track-fav">
+                  <FavouriteButton
+                    isFavourite={isFav}
+                    onToggle={() => favourites.toggle(t.filePath)}
+                    showOnHover={!isFav}
+                  />
+                </div>
                 <div className="track-time">{formatTime(t.duration)}</div>
               </div>
             );
@@ -670,6 +702,115 @@ function ArtistDetailView({
           </div>
         ))}
       </div>
+    </>
+  );
+}
+
+/* ---------- Favourites view ---------- */
+
+function FavouritesView({
+  currentTrackPath,
+  onPlayTracks,
+  onTrackContextMenu,
+  favourites,
+}: {
+  currentTrackPath: string | null;
+  onPlayTracks: (tracks: Track[], idx: number) => void;
+  onTrackContextMenu: (e: React.MouseEvent, track: Track) => void;
+  favourites: ReturnType<typeof useFavourites>;
+}) {
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+
+  // Reload when the favourites set changes (e.g. user toggled a favourite from
+  // somewhere else in the app)
+  const favCount = favourites.favourites.size;
+  useEffect(() => {
+    setLoading(true);
+    window.api.favouritesGetTracks().then((t) => {
+      setTracks(t);
+      setLoading(false);
+    });
+  }, [favCount]);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return tracks;
+    const q = query.toLowerCase();
+    return tracks.filter((t) =>
+      t.title.toLowerCase().includes(q) ||
+      t.artist.toLowerCase().includes(q) ||
+      t.album.toLowerCase().includes(q)
+    );
+  }, [tracks, query]);
+
+  return (
+    <>
+      <div className="content-header">
+        <div>
+          <div className="content-title">Favourites</div>
+          <div className="content-subtitle">
+            {loading
+              ? 'Loading...'
+              : query
+                ? `${filtered.length} of ${tracks.length}`
+                : `${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'}`}
+          </div>
+        </div>
+        {tracks.length > 0 && (
+          <div className="content-header-controls">
+            <SearchBox value={query} onChange={setQuery} placeholder="Search favourites…" />
+          </div>
+        )}
+      </div>
+
+      {tracks.length === 0 && !loading ? (
+        <div className="empty-state">
+          <div className="empty-state-title">No favourites yet</div>
+          <div className="empty-state-text">
+            Tap the heart on any track to save it here. You can also right-click a track and choose "Add to favourites".
+          </div>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="empty-state-inline">No matches for "{query}"</div>
+      ) : (
+        <div className="track-list track-list-wide">
+          <div className="track-list-header track-row-wide">
+            <div></div>
+            <div>Title</div>
+            <div>Artist</div>
+            <div>Album</div>
+            <div></div>
+            <div style={{ textAlign: 'right' }}>Time</div>
+          </div>
+          {filtered.map((t, i) => {
+            const playing = currentTrackPath === t.filePath;
+            const isFav = favourites.isFavourite(t.filePath);
+            return (
+              <div
+                key={t.id}
+                className={`track-row track-row-wide ${playing ? 'playing' : ''}`}
+                onDoubleClick={() => onPlayTracks(filtered, i)}
+                onContextMenu={(e) => onTrackContextMenu(e, t)}
+              >
+                <div className="track-row-cover">
+                  <AlbumCover trackPath={t.filePath} alt={t.album} className="track-row-cover-img" />
+                </div>
+                <div className="track-title">{t.title}</div>
+                <div className="track-secondary">{t.artist}</div>
+                <div className="track-secondary">{t.album}</div>
+                <div className="track-fav">
+                  <FavouriteButton
+                    isFavourite={isFav}
+                    onToggle={() => favourites.toggle(t.filePath)}
+                  />
+                </div>
+                <div className="track-time">{formatTime(t.duration)}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </>
   );
 }
@@ -805,12 +946,14 @@ function AlbumDetailView({
   onPlayTrack,
   currentTrackPath,
   onTrackContextMenu,
+  favourites,
 }: {
   album: Album;
   onBack: () => void;
   onPlayTrack: (tracks: Track[], idx: number) => void;
   currentTrackPath: string | null;
   onTrackContextMenu: (e: React.MouseEvent, track: Track) => void;
+  favourites: ReturnType<typeof useFavourites>;
 }) {
   const [tracks, setTracks] = useState<Track[]>([]);
 
@@ -850,18 +993,20 @@ function AlbumDetailView({
         </div>
       </div>
 
-      <div className="track-list">
-        <div className="track-list-header">
+      <div className="track-list track-list-album">
+        <div className="track-list-header track-row-album">
           <div style={{ textAlign: 'right' }}>#</div>
           <div>Title</div>
+          <div></div>
           <div style={{ textAlign: 'right' }}>Time</div>
         </div>
         {tracks.map((t, i) => {
           const playing = currentTrackPath === t.filePath;
+          const isFav = favourites.isFavourite(t.filePath);
           return (
             <div
               key={t.id}
-              className={`track-row ${playing ? 'playing' : ''}`}
+              className={`track-row track-row-album ${playing ? 'playing' : ''}`}
               onDoubleClick={() => onPlayTrack(tracks, i)}
               onContextMenu={(e) => onTrackContextMenu(e, t)}
             >
@@ -871,6 +1016,13 @@ function AlbumDetailView({
                 {t.artist !== album.artist && (
                   <div className="track-artist-sub">{t.artist}</div>
                 )}
+              </div>
+              <div className="track-fav">
+                <FavouriteButton
+                  isFavourite={isFav}
+                  onToggle={() => favourites.toggle(t.filePath)}
+                  showOnHover={!isFav}
+                />
               </div>
               <div className="track-time">{formatTime(t.duration)}</div>
             </div>
@@ -883,7 +1035,13 @@ function AlbumDetailView({
 
 /* ---------- Player bar ---------- */
 
-function PlayerBar({ player }: { player: ReturnType<typeof usePlayer> }) {
+function PlayerBar({
+  player,
+  favourites,
+}: {
+  player: ReturnType<typeof usePlayer>;
+  favourites: ReturnType<typeof useFavourites>;
+}) {
   const { state, togglePlay, next, prev, seek, setVolume, toggleShuffle, cycleRepeat, jumpToQueueIndex, removeFromQueue } = player;
   const t = state.currentTrack;
   const pct = state.duration > 0 ? (state.currentTime / state.duration) * 100 : 0;
@@ -904,6 +1062,7 @@ function PlayerBar({ player }: { player: ReturnType<typeof usePlayer> }) {
 
   const repeatLabel = state.repeat === 'off' ? 'Repeat: off' : state.repeat === 'all' ? 'Repeat: all' : 'Repeat: one';
   const upcomingCount = Math.max(0, state.queue.length - state.queueIndex - 1);
+  const isCurrentFav = t ? favourites.isFavourite(t.filePath) : false;
 
   return (
     <div className="player">
@@ -915,6 +1074,12 @@ function PlayerBar({ player }: { player: ReturnType<typeof usePlayer> }) {
               <div className="player-info-title">{t.title}</div>
               <div className="player-info-artist">{t.artist}</div>
             </div>
+            <FavouriteButton
+              isFavourite={isCurrentFav}
+              onToggle={() => favourites.toggle(t.filePath)}
+              size={16}
+              className="player-fav-button"
+            />
           </>
         ) : (
           <div className="player-info-artist">No track playing</div>

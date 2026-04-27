@@ -1395,3 +1395,76 @@ button {
 .player-buttons {
   gap: 8px;
 }
+
+/* =========================================================
+   Favourite buttons
+   ========================================================= */
+
+.favourite-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 120ms ease, background 120ms ease, transform 120ms ease, opacity 120ms ease;
+}
+
+.favourite-btn:hover {
+  color: var(--accent-bright);
+  background: var(--bg-elevated);
+  transform: scale(1.08);
+}
+
+.favourite-btn.is-favourite {
+  color: var(--accent);
+}
+
+.favourite-btn.is-favourite:hover {
+  color: var(--accent-bright);
+}
+
+/* In track rows we hide the empty-heart by default and only reveal on row hover.
+   The filled-heart (already favourited) is always visible. */
+.favourite-btn.show-on-hover {
+  opacity: 0;
+}
+
+.track-row:hover .favourite-btn.show-on-hover,
+.up-next-row:hover .favourite-btn.show-on-hover {
+  opacity: 1;
+}
+
+/* =========================================================
+   Track row updates: include favourite column
+   ========================================================= */
+
+/* Songs / Favourites rows: 6 cols including favourite */
+.track-list-wide .track-list-header.track-row-wide,
+.track-row-wide {
+  grid-template-columns: 44px 2fr 1.4fr 1.4fr 32px 70px;
+}
+
+.track-fav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Album detail rows: # | Title | favourite | Time */
+.track-list-album .track-list-header.track-row-album,
+.track-row-album {
+  grid-template-columns: 40px 1fr 32px 80px;
+}
+
+/* =========================================================
+   Player bar favourite button (sits next to track info)
+   ========================================================= */
+
+.player-fav-button {
+  margin-left: 6px;
+  flex-shrink: 0;
+}
