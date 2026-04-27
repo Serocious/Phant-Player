@@ -6,7 +6,7 @@ Built because MusicBee's interface felt dated. Phant scans a music folder,
 displays albums in an Apple Music-style grid, plays MP3/FLAC/M4A/OGG/Opus/WAV,
 and integrates with Last.fm and the Windows System Media Transport Controls.
 
-![Phant screenshot](https://serocious.s-ul.eu/aPuz0yKE)
+![Phant screenshot](https://serocious.s-ul.eu/GO8TPk5M)
 
 ## Disclaimer
 
