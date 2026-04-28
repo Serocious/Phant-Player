@@ -11,6 +11,8 @@ export interface Track {
   year: number | null;
   genre: string | null;
   bitrate: number | null;
+  sampleRate: number | null; // Hz
+  channels: number | null;
   format: string; // 'mp3', 'flac', etc.
 }
 
@@ -50,6 +52,17 @@ export const IPC = {
   FAVOURITES_GET_TRACKS: 'favourites:getTracks',
   FAVOURITES_ADD: 'favourites:add',
   FAVOURITES_REMOVE: 'favourites:remove',
+  TRACK_DETAILS: 'library:trackDetails',
+  PLAYLIST_LIST: 'playlist:list',
+  PLAYLIST_CREATE: 'playlist:create',
+  PLAYLIST_RENAME: 'playlist:rename',
+  PLAYLIST_DELETE: 'playlist:delete',
+  PLAYLIST_GET_TRACKS: 'playlist:getTracks',
+  PLAYLIST_ADD_TRACK: 'playlist:addTrack',
+  PLAYLIST_REMOVE_TRACK: 'playlist:removeTrack',
+  NOTE_GET: 'note:get',
+  NOTE_SET: 'note:set',
+  SHOW_IN_FOLDER: 'app:showInFolder',
   SCAN_PROGRESS: 'scan:progress',
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
@@ -71,6 +84,13 @@ export interface Artist {
   representativeTrackPath: string;
 }
 
+export interface Playlist {
+  id: number;
+  name: string;
+  createdAt: number;
+  trackCount: number;
+}
+
 export interface LastfmStatus {
   configured: boolean; // API key + secret present in config
   authenticated: boolean; // session key present
@@ -85,4 +105,21 @@ export interface ScrobbleData {
   trackNumber?: number;
   duration?: number;
   timestamp?: number;
+}
+
+/**
+ * On-demand details about a track: combines DB metadata with live filesystem
+ * info (file size) and any data we re-read from the file (e.g. sampleRate
+ * for tracks scanned before that field existed).
+ */
+export interface TrackDetails {
+  filePath: string;
+  fileName: string;
+  fileSize: number; // bytes
+  format: string;
+  duration: number;
+  bitrate: number | null;
+  sampleRate: number | null;
+  channels: number | null;
+  modifiedAt: number; // unix ms
 }

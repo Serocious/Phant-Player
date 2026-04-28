@@ -9,10 +9,6 @@ and integrates with Last.fm and the Windows System Media Transport Controls
 
 ![Phant screenshot — TODO replace this line with an actual screenshot]()
 
-## Disclaimer
-
-This is a personal project, and not intended to be commercialised. I do not have any rights to `Phant`, and elements were used with the sole purpose of honouring Taishi's works.
-
 ## Features
 
 - Library scan over a folder of albums, with embedded album art extraction

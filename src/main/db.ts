@@ -73,6 +73,8 @@ export async function initDb(): Promise<Database> {
       year INTEGER,
       genre TEXT,
       bitrate INTEGER,
+      sampleRate INTEGER,
+      channels INTEGER,
       format TEXT NOT NULL,
       addedAt INTEGER NOT NULL
     );
@@ -89,7 +91,35 @@ export async function initDb(): Promise<Database> {
       filePath TEXT PRIMARY KEY,
       addedAt INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS playlists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      createdAt INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS playlist_tracks (
+      playlistId INTEGER NOT NULL,
+      filePath TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      addedAt INTEGER NOT NULL,
+      PRIMARY KEY (playlistId, filePath),
+      FOREIGN KEY (playlistId) REFERENCES playlists(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist ON playlist_tracks(playlistId, position);
+
+    CREATE TABLE IF NOT EXISTS track_notes (
+      filePath TEXT PRIMARY KEY,
+      notes TEXT NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
   `);
+
+  // Migrate existing databases: add columns if they don't exist.
+  // SQLite throws if the column already exists — we catch and ignore.
+  try { db.run('ALTER TABLE tracks ADD COLUMN sampleRate INTEGER'); } catch {}
+  try { db.run('ALTER TABLE tracks ADD COLUMN channels INTEGER'); } catch {}
 
   return db;
 }

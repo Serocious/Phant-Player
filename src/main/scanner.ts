@@ -66,13 +66,14 @@ export async function scanLibrary(
   db.run('BEGIN TRANSACTION');
 
   const stmt = db.prepare(`
-    INSERT INTO tracks (filePath, title, artist, albumArtist, album, trackNumber, diskNumber, duration, year, genre, bitrate, format, addedAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tracks (filePath, title, artist, albumArtist, album, trackNumber, diskNumber, duration, year, genre, bitrate, sampleRate, channels, format, addedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(filePath) DO UPDATE SET
       title=excluded.title, artist=excluded.artist, albumArtist=excluded.albumArtist,
       album=excluded.album, trackNumber=excluded.trackNumber, diskNumber=excluded.diskNumber,
       duration=excluded.duration, year=excluded.year, genre=excluded.genre,
-      bitrate=excluded.bitrate, format=excluded.format
+      bitrate=excluded.bitrate, sampleRate=excluded.sampleRate, channels=excluded.channels,
+      format=excluded.format
   `);
 
   for (const filePath of files) {
@@ -99,6 +100,8 @@ export async function scanLibrary(
         common.year || null,
         (common.genre && common.genre[0]) || null,
         format.bitrate ? Math.round(format.bitrate / 1000) : null,
+        format.sampleRate || null,
+        format.numberOfChannels || null,
         (format.container || path.extname(filePath).slice(1)).toLowerCase(),
         now,
       ]);

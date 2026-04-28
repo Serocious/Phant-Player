@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC, Album, Track, Artist, ScanProgress, ScanResult, LastfmStatus, ScrobbleData } from '../shared/types';
+import { IPC, Album, Track, Artist, ScanProgress, ScanResult, LastfmStatus, ScrobbleData, TrackDetails, Playlist } from '../shared/types';
 
 const api = {
   scanLibrary: (rootDir: string): Promise<ScanResult> =>
@@ -31,6 +31,39 @@ const api = {
 
   favouritesRemove: (filePath: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.FAVOURITES_REMOVE, filePath),
+
+  getTrackDetails: (filePath: string): Promise<TrackDetails | null> =>
+    ipcRenderer.invoke(IPC.TRACK_DETAILS, filePath),
+
+  playlistList: (): Promise<Playlist[]> =>
+    ipcRenderer.invoke(IPC.PLAYLIST_LIST),
+
+  playlistCreate: (name: string): Promise<Playlist> =>
+    ipcRenderer.invoke(IPC.PLAYLIST_CREATE, name),
+
+  playlistRename: (id: number, newName: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.PLAYLIST_RENAME, id, newName),
+
+  playlistDelete: (id: number): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.PLAYLIST_DELETE, id),
+
+  playlistGetTracks: (playlistId: number): Promise<Track[]> =>
+    ipcRenderer.invoke(IPC.PLAYLIST_GET_TRACKS, playlistId),
+
+  playlistAddTrack: (playlistId: number, filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.PLAYLIST_ADD_TRACK, playlistId, filePath),
+
+  playlistRemoveTrack: (playlistId: number, filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.PLAYLIST_REMOVE_TRACK, playlistId, filePath),
+
+  getNote: (filePath: string): Promise<string> =>
+    ipcRenderer.invoke(IPC.NOTE_GET, filePath),
+
+  setNote: (filePath: string, notes: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.NOTE_SET, filePath, notes),
+
+  showInFolder: (filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.SHOW_IN_FOLDER, filePath),
 
   getAlbumArt: (trackFilePath: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.LIBRARY_GET_ALBUM_ART, trackFilePath),

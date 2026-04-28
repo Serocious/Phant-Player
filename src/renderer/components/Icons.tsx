@@ -159,3 +159,11 @@ export const HeartFilledIcon: React.FC<IconProps> = ({ size = 14, className }) =
     <path d="M8 13.5s-5-3-5-7a3 3 0 0 1 5-2.2A3 3 0 0 1 13 6.5c0 4-5 7-5 7z" />
   </svg>
 );
+
+export const InfoIcon: React.FC<IconProps> = ({ size = 14, className }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="8" cy="8" r="6" />
+    <path d="M8 7v4" />
+    <circle cx="8" cy="5" r="0.4" fill="currentColor" stroke="none" />
+  </svg>
+);

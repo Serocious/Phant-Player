@@ -1,23 +1,28 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import type { Album, Track, Artist, ScanProgress, LastfmStatus } from '../shared/types';
+import type { Album, Track, Artist, Playlist, ScanProgress, LastfmStatus } from '../shared/types';
 import { usePlayer, formatTime } from './hooks/usePlayer';
 import { useMediaSession } from './hooks/useMediaSession';
 import { useFavourites } from './hooks/useFavourites';
+import { usePlaylists } from './hooks/usePlaylists';
+import { useDragSeek } from './hooks/useDragSeek';
 import { AlbumCover } from './components/AlbumCover';
 import { SearchBox } from './components/SearchBox';
 import { ContextMenu, type ContextMenuEntry } from './components/ContextMenu';
 import { UpNextPopup } from './components/UpNextPopup';
 import { FavouriteButton } from './components/FavouriteButton';
+import { TrackDetailsPopup } from './components/TrackDetailsPopup';
+import { TextInputModal } from './components/TextInputModal';
+import { ConfirmModal } from './components/ConfirmModal';
 import {
   PlayIcon, PauseIcon, PrevIcon, NextIcon, VolumeIcon,
   AlbumsIcon, SongsIcon, ArtistsIcon,
   RescanIcon, SettingsIcon, ChevronLeftIcon, ChevronDownIcon,
   ShuffleIcon, RepeatIcon, RepeatOneIcon, QueueIcon,
-  HeartIcon,
+  HeartIcon, InfoIcon, PlusIcon, CloseIcon,
 } from './components/Icons';
 import logoUrl from './assets/logo.png';
 
-type ViewKind = 'albums' | 'songs' | 'artists' | 'favourites' | 'settings' | 'album-detail' | 'artist-detail';
+type ViewKind = 'albums' | 'songs' | 'artists' | 'favourites' | 'settings' | 'album-detail' | 'artist-detail' | 'playlist-detail';
 
 type View =
   | { kind: 'albums' }
@@ -26,7 +31,8 @@ type View =
   | { kind: 'favourites' }
   | { kind: 'settings' }
   | { kind: 'album-detail'; album: Album }
-  | { kind: 'artist-detail'; artist: Artist };
+  | { kind: 'artist-detail'; artist: Artist }
+  | { kind: 'playlist-detail'; playlist: Playlist };
 
 type AlbumSort = 'artist' | 'name' | 'year' | 'tracks';
 
@@ -40,6 +46,7 @@ const ALBUM_SORT_LABELS: Record<AlbumSort, string> = {
 export default function App() {
   const player = usePlayer();
   const favourites = useFavourites();
+  const playlists = usePlaylists();
   const [musicFolder, setMusicFolder] = useState<string | null>(null);
   const [albums, setAlbums] = useState<Album[]>([]);
   const [view, setView] = useState<View>({ kind: 'albums' });
@@ -47,6 +54,12 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuEntry[] } | null>(null);
+  const [detailsTrack, setDetailsTrack] = useState<Track | null>(null);
+  const [createPlaylistOpen, setCreatePlaylistOpen] = useState(false);
+  /** When set, user is creating a playlist AND we should add this track to it */
+  const [pendingTrackForNewPlaylist, setPendingTrackForNewPlaylist] = useState<Track | null>(null);
+  const [renamePlaylist, setRenamePlaylist] = useState<Playlist | null>(null);
+  const [deletePlaylist, setDeletePlaylist] = useState<Playlist | null>(null);
 
   useMediaSession(player.state, {
     togglePlay: player.togglePlay,
@@ -59,6 +72,27 @@ export default function App() {
     (e: React.MouseEvent, track: Track) => {
       e.preventDefault();
       const isFav = favourites.isFavourite(track.filePath);
+
+      // Build the "Add to playlist" submenu
+      const playlistSubmenu: ContextMenuEntry[] = [
+        {
+          label: '+ New playlist…',
+          onClick: () => {
+            setPendingTrackForNewPlaylist(track);
+            setCreatePlaylistOpen(true);
+          },
+        },
+      ];
+      if (playlists.playlists.length > 0) {
+        playlistSubmenu.push({ divider: true });
+        for (const pl of playlists.playlists) {
+          playlistSubmenu.push({
+            label: pl.name,
+            onClick: () => playlists.addTrack(pl.id, track.filePath),
+          });
+        }
+      }
+
       const items: ContextMenuEntry[] = [
         {
           label: 'Play next',
@@ -73,10 +107,44 @@ export default function App() {
           label: isFav ? 'Remove from favourites' : 'Add to favourites',
           onClick: () => favourites.toggle(track.filePath),
         },
+        {
+          label: 'Add to playlist',
+          submenu: playlistSubmenu,
+        },
+        { divider: true },
+        {
+          label: 'Track details',
+          onClick: () => setDetailsTrack(track),
+        },
       ];
       setContextMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [player, favourites]
+    [player, favourites, playlists]
+  );
+
+  const openTrackDetails = useCallback((track: Track) => {
+    setDetailsTrack(track);
+  }, []);
+
+  /** Right-click menu for a playlist in the sidebar */
+  const handlePlaylistContextMenu = useCallback(
+    (e: React.MouseEvent, pl: Playlist) => {
+      e.preventDefault();
+      const items: ContextMenuEntry[] = [
+        {
+          label: 'Rename',
+          onClick: () => setRenamePlaylist(pl),
+        },
+        { divider: true },
+        {
+          label: 'Delete',
+          danger: true,
+          onClick: () => setDeletePlaylist(pl),
+        },
+      ];
+      setContextMenu({ x: e.clientX, y: e.clientY, items });
+    },
+    []
   );
 
   useEffect(() => {
@@ -144,10 +212,17 @@ export default function App() {
 
       <div className="body">
         <Sidebar
-          activeView={view.kind}
+          activeView={view}
           onNavigate={navigate}
           onRescan={handleRescan}
           isScanning={isScanning}
+          playlists={playlists.playlists}
+          onCreatePlaylist={() => {
+            setPendingTrackForNewPlaylist(null);
+            setCreatePlaylistOpen(true);
+          }}
+          onOpenPlaylist={(pl) => setView({ kind: 'playlist-detail', playlist: pl })}
+          onPlaylistContextMenu={handlePlaylistContextMenu}
         />
 
         <div className="content">
@@ -170,6 +245,7 @@ export default function App() {
               onPlayTracks={(tracks, idx) => player.playQueue(tracks, idx)}
               onTrackContextMenu={handleTrackContextMenu}
               favourites={favourites}
+              onOpenDetails={openTrackDetails}
             />
           ) : view.kind === 'artists' ? (
             <ArtistsView
@@ -181,6 +257,7 @@ export default function App() {
               onPlayTracks={(tracks, idx) => player.playQueue(tracks, idx)}
               onTrackContextMenu={handleTrackContextMenu}
               favourites={favourites}
+              onOpenDetails={openTrackDetails}
             />
           ) : view.kind === 'settings' ? (
             <SettingsView
@@ -195,6 +272,7 @@ export default function App() {
               currentTrackPath={player.state.currentTrack?.filePath ?? null}
               onTrackContextMenu={handleTrackContextMenu}
               favourites={favourites}
+              onOpenDetails={openTrackDetails}
             />
           ) : view.kind === 'artist-detail' ? (
             <ArtistDetailView
@@ -205,6 +283,16 @@ export default function App() {
                 const tracks = await window.api.getTracksByAlbum(a.artist, a.name);
                 player.playQueue(tracks, 0);
               }}
+            />
+          ) : view.kind === 'playlist-detail' ? (
+            <PlaylistDetailView
+              playlist={view.playlist}
+              currentTrackPath={player.state.currentTrack?.filePath ?? null}
+              onPlayTracks={(tracks, idx) => player.playQueue(tracks, idx)}
+              onTrackContextMenu={handleTrackContextMenu}
+              favourites={favourites}
+              playlists={playlists}
+              onOpenDetails={openTrackDetails}
             />
           ) : null}
         </div>
@@ -220,6 +308,69 @@ export default function App() {
           onClose={() => setContextMenu(null)}
         />
       )}
+
+      {detailsTrack && (
+        <TrackDetailsPopup
+          track={detailsTrack}
+          onClose={() => setDetailsTrack(null)}
+        />
+      )}
+
+      {createPlaylistOpen && (
+        <TextInputModal
+          title="New playlist"
+          placeholder="Playlist name"
+          confirmLabel="Create"
+          onCancel={() => {
+            setCreatePlaylistOpen(false);
+            setPendingTrackForNewPlaylist(null);
+          }}
+          onConfirm={async (name) => {
+            const created = await playlists.create(name);
+            // If we were creating this playlist to add a track to it, do that now
+            if (pendingTrackForNewPlaylist) {
+              await playlists.addTrack(created.id, pendingTrackForNewPlaylist.filePath);
+              setPendingTrackForNewPlaylist(null);
+            }
+            setCreatePlaylistOpen(false);
+          }}
+        />
+      )}
+
+      {renamePlaylist && (
+        <TextInputModal
+          title="Rename playlist"
+          initialValue={renamePlaylist.name}
+          confirmLabel="Rename"
+          onCancel={() => setRenamePlaylist(null)}
+          onConfirm={async (newName) => {
+            await playlists.rename(renamePlaylist.id, newName);
+            // Update the active view if we just renamed the playlist we're viewing
+            if (view.kind === 'playlist-detail' && view.playlist.id === renamePlaylist.id) {
+              setView({ kind: 'playlist-detail', playlist: { ...view.playlist, name: newName } });
+            }
+            setRenamePlaylist(null);
+          }}
+        />
+      )}
+
+      {deletePlaylist && (
+        <ConfirmModal
+          title="Delete playlist"
+          message={`Delete "${deletePlaylist.name}"? This cannot be undone. The tracks themselves stay in your library.`}
+          confirmLabel="Delete"
+          danger
+          onCancel={() => setDeletePlaylist(null)}
+          onConfirm={async () => {
+            await playlists.remove(deletePlaylist.id);
+            // If we were viewing this playlist, navigate away
+            if (view.kind === 'playlist-detail' && view.playlist.id === deletePlaylist.id) {
+              setView({ kind: 'albums' });
+            }
+            setDeletePlaylist(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -231,15 +382,23 @@ function Sidebar({
   onNavigate,
   onRescan,
   isScanning,
+  playlists,
+  onCreatePlaylist,
+  onOpenPlaylist,
+  onPlaylistContextMenu,
 }: {
-  activeView: ViewKind;
+  activeView: View;
   onNavigate: (v: 'albums' | 'songs' | 'artists' | 'favourites' | 'settings') => void;
   onRescan: () => void;
   isScanning: boolean;
+  playlists: Playlist[];
+  onCreatePlaylist: () => void;
+  onOpenPlaylist: (pl: Playlist) => void;
+  onPlaylistContextMenu: (e: React.MouseEvent, pl: Playlist) => void;
 }) {
   const navItem = (kind: 'albums' | 'songs' | 'artists' | 'favourites', icon: React.ReactNode, label: string) => (
     <div
-      className={`nav-item ${activeView === kind ? 'active' : ''}`}
+      className={`nav-item ${activeView.kind === kind ? 'active' : ''}`}
       onClick={() => onNavigate(kind)}
     >
       <span className="nav-item-icon">{icon}</span>
@@ -255,6 +414,39 @@ function Sidebar({
       {navItem('artists', <ArtistsIcon />, 'Artists')}
       {navItem('favourites', <HeartIcon size={16} />, 'Favourites')}
 
+      <div className="sidebar-section sidebar-section-with-action">
+        <span>Playlists</span>
+        <button
+          className="sidebar-action-btn"
+          onClick={onCreatePlaylist}
+          title="New playlist"
+          aria-label="New playlist"
+        >
+          <PlusIcon size={12} />
+        </button>
+      </div>
+      <div className="sidebar-playlists">
+        {playlists.length === 0 ? (
+          <div className="sidebar-empty">No playlists yet</div>
+        ) : (
+          playlists.map((pl) => {
+            const isActive = activeView.kind === 'playlist-detail' && activeView.playlist.id === pl.id;
+            return (
+              <div
+                key={pl.id}
+                className={`nav-item nav-item-playlist ${isActive ? 'active' : ''}`}
+                onClick={() => onOpenPlaylist(pl)}
+                onContextMenu={(e) => onPlaylistContextMenu(e, pl)}
+                title={pl.name}
+              >
+                <span className="nav-item-playlist-name">{pl.name}</span>
+                <span className="nav-item-playlist-count">{pl.trackCount}</span>
+              </div>
+            );
+          })
+        )}
+      </div>
+
       <div style={{ flex: 1 }} />
 
       <div className="sidebar-section">Library tools</div>
@@ -267,7 +459,7 @@ function Sidebar({
         {isScanning ? 'Scanning...' : 'Rescan library'}
       </div>
       <div
-        className={`nav-item ${activeView === 'settings' ? 'active' : ''}`}
+        className={`nav-item ${activeView.kind === 'settings' ? 'active' : ''}`}
         onClick={() => onNavigate('settings')}
       >
         <span className="nav-item-icon"><SettingsIcon /></span>
@@ -480,11 +672,13 @@ function SongsView({
   onPlayTracks,
   onTrackContextMenu,
   favourites,
+  onOpenDetails,
 }: {
   currentTrackPath: string | null;
   onPlayTracks: (tracks: Track[], idx: number) => void;
   onTrackContextMenu: (e: React.MouseEvent, track: Track) => void;
   favourites: ReturnType<typeof useFavourites>;
+  onOpenDetails: (track: Track) => void;
 }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [sort, setSort] = useState<SongSort>('title');
@@ -550,6 +744,7 @@ function SongsView({
             <div>Artist</div>
             <div>Album</div>
             <div></div>
+            <div></div>
             <div style={{ textAlign: 'right' }}>Time</div>
           </div>
           {sorted.map((t, i) => {
@@ -574,6 +769,16 @@ function SongsView({
                     onToggle={() => favourites.toggle(t.filePath)}
                     showOnHover={!isFav}
                   />
+                </div>
+                <div className="track-info">
+                  <button
+                    className="info-btn show-on-hover"
+                    onClick={(e) => { e.stopPropagation(); onOpenDetails(t); }}
+                    title="Track details"
+                    aria-label="Track details"
+                  >
+                    <InfoIcon />
+                  </button>
                 </div>
                 <div className="track-time">{formatTime(t.duration)}</div>
               </div>
@@ -706,6 +911,178 @@ function ArtistDetailView({
   );
 }
 
+/* ---------- Playlist detail view ---------- */
+
+function PlaylistDetailView({
+  playlist,
+  currentTrackPath,
+  onPlayTracks,
+  onTrackContextMenu,
+  favourites,
+  playlists,
+  onOpenDetails,
+}: {
+  playlist: Playlist;
+  currentTrackPath: string | null;
+  onPlayTracks: (tracks: Track[], idx: number) => void;
+  onTrackContextMenu: (e: React.MouseEvent, track: Track) => void;
+  favourites: ReturnType<typeof useFavourites>;
+  playlists: ReturnType<typeof usePlaylists>;
+  onOpenDetails: (track: Track) => void;
+}) {
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+
+  // Reload tracks whenever the playlist or its track count changes
+  const trackCount = playlist.trackCount;
+  useEffect(() => {
+    setLoading(true);
+    window.api.playlistGetTracks(playlist.id).then((t) => {
+      setTracks(t);
+      setLoading(false);
+    });
+  }, [playlist.id, trackCount]);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return tracks;
+    const q = query.toLowerCase();
+    return tracks.filter((t) =>
+      t.title.toLowerCase().includes(q) ||
+      t.artist.toLowerCase().includes(q) ||
+      t.album.toLowerCase().includes(q)
+    );
+  }, [tracks, query]);
+
+  const totalDuration = useMemo(
+    () => tracks.reduce((sum, t) => sum + (t.duration || 0), 0),
+    [tracks]
+  );
+
+  const formatTotalDuration = (seconds: number): string => {
+    if (seconds < 60) return `${Math.round(seconds)} seconds`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+    const hours = Math.floor(minutes / 60);
+    const remMin = minutes % 60;
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'}${remMin > 0 ? ` ${remMin} min` : ''}`;
+  };
+
+  return (
+    <>
+      <div className="content-header">
+        <div>
+          <div className="content-eyebrow">Playlist</div>
+          <div className="content-title">{playlist.name}</div>
+          <div className="content-subtitle">
+            {loading
+              ? 'Loading...'
+              : tracks.length === 0
+                ? 'Empty playlist'
+                : `${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'} • ${formatTotalDuration(totalDuration)}`}
+          </div>
+        </div>
+        {tracks.length > 0 && (
+          <div className="content-header-controls">
+            <SearchBox value={query} onChange={setQuery} placeholder="Search playlist…" />
+            <button
+              className="btn"
+              onClick={() => onPlayTracks(filtered, 0)}
+              disabled={filtered.length === 0}
+            >
+              <PlayIcon size={11} />
+              <span style={{ marginLeft: 6 }}>Play</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {tracks.length === 0 && !loading ? (
+        <div className="empty-state">
+          <div className="empty-state-title">This playlist is empty</div>
+          <div className="empty-state-text">
+            Right-click any track and choose "Add to playlist" → "{playlist.name}" to add it here.
+          </div>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="empty-state-inline">No matches for "{query}"</div>
+      ) : (
+        <div className="track-list track-list-wide">
+          <div className="track-list-header track-row-wide">
+            <div></div>
+            <div>Title</div>
+            <div>Artist</div>
+            <div>Album</div>
+            <div></div>
+            <div></div>
+            <div style={{ textAlign: 'right' }}>Time</div>
+          </div>
+          {filtered.map((t, i) => {
+            const playing = currentTrackPath === t.filePath;
+            const isFav = favourites.isFavourite(t.filePath);
+
+            // Custom context menu for tracks inside a playlist: includes a
+            // "Remove from playlist" option.
+            const handleRowContextMenu = (e: React.MouseEvent) => {
+              e.preventDefault();
+              // Reuse the global handler but inject our extra item by temporarily
+              // intercepting. Simplest: just call default and let the user use
+              // the row's "remove" hover button. But we want it in the menu too.
+              // Easier: build a new event that the global handler picks up.
+              onTrackContextMenu(e, t);
+            };
+
+            return (
+              <div
+                key={t.id}
+                className={`track-row track-row-wide ${playing ? 'playing' : ''}`}
+                onDoubleClick={() => onPlayTracks(filtered, i)}
+                onContextMenu={handleRowContextMenu}
+              >
+                <div className="track-row-cover">
+                  <AlbumCover trackPath={t.filePath} alt={t.album} className="track-row-cover-img" />
+                </div>
+                <div className="track-title">{t.title}</div>
+                <div className="track-secondary">{t.artist}</div>
+                <div className="track-secondary">{t.album}</div>
+                <div className="track-fav">
+                  <FavouriteButton
+                    isFavourite={isFav}
+                    onToggle={() => favourites.toggle(t.filePath)}
+                    showOnHover={!isFav}
+                  />
+                </div>
+                <div className="track-info">
+                  <button
+                    className="info-btn show-on-hover"
+                    onClick={(e) => { e.stopPropagation(); onOpenDetails(t); }}
+                    title="Track details"
+                    aria-label="Track details"
+                  >
+                    <InfoIcon />
+                  </button>
+                  <button
+                    className="info-btn show-on-hover"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      playlists.removeTrack(playlist.id, t.filePath);
+                    }}
+                    title="Remove from playlist"
+                    aria-label="Remove from playlist"
+                  >
+                    <CloseIcon size={12} />
+                  </button>
+                </div>
+                <div className="track-time">{formatTime(t.duration)}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ---------- Favourites view ---------- */
 
 function FavouritesView({
@@ -713,11 +1090,13 @@ function FavouritesView({
   onPlayTracks,
   onTrackContextMenu,
   favourites,
+  onOpenDetails,
 }: {
   currentTrackPath: string | null;
   onPlayTracks: (tracks: Track[], idx: number) => void;
   onTrackContextMenu: (e: React.MouseEvent, track: Track) => void;
   favourites: ReturnType<typeof useFavourites>;
+  onOpenDetails: (track: Track) => void;
 }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
@@ -781,6 +1160,7 @@ function FavouritesView({
             <div>Artist</div>
             <div>Album</div>
             <div></div>
+            <div></div>
             <div style={{ textAlign: 'right' }}>Time</div>
           </div>
           {filtered.map((t, i) => {
@@ -804,6 +1184,16 @@ function FavouritesView({
                     isFavourite={isFav}
                     onToggle={() => favourites.toggle(t.filePath)}
                   />
+                </div>
+                <div className="track-info">
+                  <button
+                    className="info-btn show-on-hover"
+                    onClick={(e) => { e.stopPropagation(); onOpenDetails(t); }}
+                    title="Track details"
+                    aria-label="Track details"
+                  >
+                    <InfoIcon />
+                  </button>
                 </div>
                 <div className="track-time">{formatTime(t.duration)}</div>
               </div>
@@ -947,6 +1337,7 @@ function AlbumDetailView({
   currentTrackPath,
   onTrackContextMenu,
   favourites,
+  onOpenDetails,
 }: {
   album: Album;
   onBack: () => void;
@@ -954,6 +1345,7 @@ function AlbumDetailView({
   currentTrackPath: string | null;
   onTrackContextMenu: (e: React.MouseEvent, track: Track) => void;
   favourites: ReturnType<typeof useFavourites>;
+  onOpenDetails: (track: Track) => void;
 }) {
   const [tracks, setTracks] = useState<Track[]>([]);
 
@@ -998,6 +1390,7 @@ function AlbumDetailView({
           <div style={{ textAlign: 'right' }}>#</div>
           <div>Title</div>
           <div></div>
+          <div></div>
           <div style={{ textAlign: 'right' }}>Time</div>
         </div>
         {tracks.map((t, i) => {
@@ -1024,6 +1417,16 @@ function AlbumDetailView({
                   showOnHover={!isFav}
                 />
               </div>
+              <div className="track-info">
+                <button
+                  className="info-btn show-on-hover"
+                  onClick={(e) => { e.stopPropagation(); onOpenDetails(t); }}
+                  title="Track details"
+                  aria-label="Track details"
+                >
+                  <InfoIcon />
+                </button>
+              </div>
               <div className="track-time">{formatTime(t.duration)}</div>
             </div>
           );
@@ -1047,22 +1450,17 @@ function PlayerBar({
   const pct = state.duration > 0 ? (state.currentTime / state.duration) * 100 : 0;
   const [upNextOpen, setUpNextOpen] = useState(false);
 
-  const onSeekClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!state.duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const ratio = (e.clientX - rect.left) / rect.width;
-    seek(ratio * state.duration);
-  };
-
-  const onVolumeClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const ratio = (e.clientX - rect.left) / rect.width;
-    setVolume(ratio);
-  };
-
   const repeatLabel = state.repeat === 'off' ? 'Repeat: off' : state.repeat === 'all' ? 'Repeat: all' : 'Repeat: one';
   const upcomingCount = Math.max(0, state.queue.length - state.queueIndex - 1);
   const isCurrentFav = t ? favourites.isFavourite(t.filePath) : false;
+
+  // Drag-to-seek for both bars
+  const seekDrag = useDragSeek((ratio) => {
+    if (state.duration > 0) seek(ratio * state.duration);
+  });
+  const volumeDrag = useDragSeek((ratio) => {
+    setVolume(ratio);
+  });
 
   return (
     <div className="player">
@@ -1116,7 +1514,11 @@ function PlayerBar({
         </div>
         <div className="player-progress">
           <div className="player-time">{formatTime(state.currentTime)}</div>
-          <div className="progress-bar" onClick={onSeekClick}>
+          <div
+            ref={seekDrag.barRef}
+            className={`progress-bar ${seekDrag.dragging ? 'dragging' : ''}`}
+            onMouseDown={seekDrag.onMouseDown}
+          >
             <div className="progress-fill" style={{ width: `${pct}%` }} />
           </div>
           <div className="player-time right">{formatTime(state.duration)}</div>
@@ -1146,7 +1548,11 @@ function PlayerBar({
         </div>
         <div className="volume">
           <VolumeIcon />
-          <div className="volume-bar" onClick={onVolumeClick}>
+          <div
+            ref={volumeDrag.barRef}
+            className={`volume-bar ${volumeDrag.dragging ? 'dragging' : ''}`}
+            onMouseDown={volumeDrag.onMouseDown}
+          >
             <div className="volume-fill" style={{ width: `${state.volume * 100}%` }} />
           </div>
         </div>

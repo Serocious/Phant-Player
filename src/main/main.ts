@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 
@@ -13,6 +13,7 @@ app.commandLine.appendSwitch(
 
 import { initDb, run, all, get, closeDb } from './db';
 import { scanLibrary, getAlbumArtPath, getEmbeddedArtDataUrl } from './scanner';
+import { parseFile } from 'music-metadata';
 import {
   setConfig as setLastfmConfig,
   isConfigured as isLastfmConfigured,
@@ -25,7 +26,7 @@ import {
   updateNowPlaying as lastfmUpdateNowPlaying,
   scrobble as lastfmScrobble,
 } from './lastfm';
-import { IPC, Album, Track, LastfmStatus, ScrobbleData } from '../shared/types';
+import { IPC, Album, Track, LastfmStatus, ScrobbleData, TrackDetails, Playlist } from '../shared/types';
 
 const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
@@ -301,6 +302,132 @@ function setupIpc() {
 
   ipcMain.handle(IPC.FAVOURITES_REMOVE, (_evt, filePath: string) => {
     run('DELETE FROM favourites WHERE filePath = ?', [filePath]);
+    return true;
+  });
+
+  // ---- Track details ----
+  // Re-reads the file to give fresh, complete info — useful for tracks scanned
+  // before sampleRate/channels were tracked, and for adding file size.
+  ipcMain.handle(IPC.TRACK_DETAILS, async (_evt, filePath: string): Promise<TrackDetails | null> => {
+    try {
+      const stat = fs.statSync(filePath);
+      const meta = await parseFile(filePath, { duration: true });
+      const fmt = meta.format || {};
+      return {
+        filePath,
+        fileName: path.basename(filePath),
+        fileSize: stat.size,
+        format: (fmt.container || path.extname(filePath).slice(1)).toLowerCase(),
+        duration: fmt.duration || 0,
+        bitrate: fmt.bitrate ? Math.round(fmt.bitrate / 1000) : null,
+        sampleRate: fmt.sampleRate || null,
+        channels: fmt.numberOfChannels || null,
+        modifiedAt: stat.mtimeMs,
+      };
+    } catch (e: any) {
+      console.error('[trackDetails] failed:', e.message);
+      return null;
+    }
+  });
+
+  // ---- Playlists ----
+  ipcMain.handle(IPC.PLAYLIST_LIST, (): Playlist[] => {
+    return all<Playlist>(`
+      SELECT
+        p.id,
+        p.name,
+        p.createdAt,
+        COUNT(pt.filePath) as trackCount
+      FROM playlists p
+      LEFT JOIN playlist_tracks pt ON pt.playlistId = p.id
+      GROUP BY p.id
+      ORDER BY p.name COLLATE NOCASE
+    `);
+  });
+
+  ipcMain.handle(IPC.PLAYLIST_CREATE, (_evt, name: string): Playlist => {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('Playlist name cannot be empty');
+    const now = Date.now();
+    run('INSERT INTO playlists (name, createdAt) VALUES (?, ?)', [trimmed, now]);
+    const row = get<Playlist & { id: number }>(
+      'SELECT id, name, createdAt FROM playlists WHERE rowid = last_insert_rowid()'
+    );
+    if (!row) throw new Error('Playlist creation failed');
+    return { ...row, trackCount: 0 };
+  });
+
+  ipcMain.handle(IPC.PLAYLIST_RENAME, (_evt, id: number, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed) throw new Error('Playlist name cannot be empty');
+    run('UPDATE playlists SET name = ? WHERE id = ?', [trimmed, id]);
+    return true;
+  });
+
+  ipcMain.handle(IPC.PLAYLIST_DELETE, (_evt, id: number) => {
+    // CASCADE on playlist_tracks handles the cleanup
+    run('DELETE FROM playlist_tracks WHERE playlistId = ?', [id]);
+    run('DELETE FROM playlists WHERE id = ?', [id]);
+    return true;
+  });
+
+  ipcMain.handle(IPC.PLAYLIST_GET_TRACKS, (_evt, playlistId: number): Track[] => {
+    return all<Track>(`
+      SELECT t.*
+      FROM tracks t
+      INNER JOIN playlist_tracks pt ON pt.filePath = t.filePath
+      WHERE pt.playlistId = ?
+      ORDER BY pt.position ASC, pt.addedAt ASC
+    `, [playlistId]);
+  });
+
+  ipcMain.handle(IPC.PLAYLIST_ADD_TRACK, (_evt, playlistId: number, filePath: string) => {
+    // Ignore duplicates (composite primary key prevents them, INSERT OR IGNORE makes it silent)
+    const maxPos = get<{ max: number | null }>(
+      'SELECT MAX(position) as max FROM playlist_tracks WHERE playlistId = ?',
+      [playlistId]
+    );
+    const nextPos = (maxPos?.max ?? -1) + 1;
+    run(
+      'INSERT OR IGNORE INTO playlist_tracks (playlistId, filePath, position, addedAt) VALUES (?, ?, ?, ?)',
+      [playlistId, filePath, nextPos, Date.now()]
+    );
+    return true;
+  });
+
+  ipcMain.handle(IPC.PLAYLIST_REMOVE_TRACK, (_evt, playlistId: number, filePath: string) => {
+    run(
+      'DELETE FROM playlist_tracks WHERE playlistId = ? AND filePath = ?',
+      [playlistId, filePath]
+    );
+    return true;
+  });
+
+  // ---- Notes ----
+  ipcMain.handle(IPC.NOTE_GET, (_evt, filePath: string): string => {
+    const row = get<{ notes: string }>('SELECT notes FROM track_notes WHERE filePath = ?', [filePath]);
+    return row?.notes || '';
+  });
+
+  ipcMain.handle(IPC.NOTE_SET, (_evt, filePath: string, notes: string) => {
+    const trimmed = notes;
+    if (trimmed.trim() === '') {
+      // Empty notes: delete the row instead of storing whitespace
+      run('DELETE FROM track_notes WHERE filePath = ?', [filePath]);
+    } else {
+      run(
+        'INSERT INTO track_notes (filePath, notes, updatedAt) VALUES (?, ?, ?) ' +
+        'ON CONFLICT(filePath) DO UPDATE SET notes = excluded.notes, updatedAt = excluded.updatedAt',
+        [filePath, trimmed, Date.now()]
+      );
+    }
+    return true;
+  });
+
+  // ---- Show in folder ----
+  ipcMain.handle(IPC.SHOW_IN_FOLDER, (_evt, filePath: string) => {
+    // Highlights the file in the OS file manager. Works on Windows, macOS, Linux.
+    shell.showItemInFolder(filePath);
     return true;
   });
 
