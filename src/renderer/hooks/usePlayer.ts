@@ -86,6 +86,102 @@ export function usePlayer() {
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  // ---------- queue persistence ----------
+  // Save queue to settings table whenever it changes (debounced).
+  // Format: { paths: string[], index: number, shuffle: bool, repeat: string }
+  const persistTimer = useRef<number | null>(null);
+  const lastPersistedSig = useRef<string>('');
+  const queueLoadedRef = useRef(false);
+
+  useEffect(() => {
+    // Don't persist until we've finished loading on startup, otherwise we'd
+    // overwrite the saved queue with the empty initial state.
+    if (!queueLoadedRef.current) return;
+
+    const sig = JSON.stringify({
+      paths: state.queue.map((t) => t.filePath),
+      i: state.queueIndex,
+      sh: state.shuffle,
+      rp: state.repeat,
+    });
+    if (sig === lastPersistedSig.current) return;
+
+    if (persistTimer.current !== null) {
+      window.clearTimeout(persistTimer.current);
+    }
+    persistTimer.current = window.setTimeout(() => {
+      window.api.setSetting('queueState', sig).catch(() => {});
+      lastPersistedSig.current = sig;
+      persistTimer.current = null;
+    }, 800);
+
+    return () => {
+      if (persistTimer.current !== null) {
+        window.clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+      }
+    };
+  }, [state.queue, state.queueIndex, state.shuffle, state.repeat]);
+
+  /**
+   * Restore a previously saved queue. Sets up the queue and currentTrack
+   * but does NOT auto-play — user clicks play to resume. Called once on
+   * startup from the App component.
+   */
+  const restoreQueue = useCallback(async () => {
+    queueLoadedRef.current = true; // Mark loaded even if there's nothing — enables persistence
+    try {
+      const raw = await window.api.getSetting('queueState');
+      if (!raw || typeof raw !== 'string') return;
+      const parsed = JSON.parse(raw);
+      const paths: string[] = Array.isArray(parsed.paths) ? parsed.paths : [];
+      const idx: number = typeof parsed.i === 'number' ? parsed.i : -1;
+      const sh: boolean = !!parsed.sh;
+      const rp: RepeatMode = parsed.rp === 'all' || parsed.rp === 'one' ? parsed.rp : 'off';
+      if (paths.length === 0) {
+        setState((s) => ({ ...s, shuffle: sh, repeat: rp }));
+        lastPersistedSig.current = raw;
+        return;
+      }
+      const tracks = await window.api.tracksByPaths(paths);
+      // tracksByPaths preserves order and skips missing files. Recompute the
+      // index in case some files have been deleted from the library.
+      let resolvedIndex = -1;
+      if (idx >= 0 && idx < paths.length) {
+        const targetPath = paths[idx];
+        resolvedIndex = tracks.findIndex((t) => t.filePath === targetPath);
+      }
+      const currentTrack = resolvedIndex >= 0 ? tracks[resolvedIndex] : (tracks[0] ?? null);
+      const finalIndex = resolvedIndex >= 0 ? resolvedIndex : (tracks.length > 0 ? 0 : -1);
+
+      originalOrderRef.current = tracks;
+
+      // Pre-load the audio source but stay paused.
+      if (currentTrack) {
+        const audio = audioRef.current;
+        if (audio) {
+          const url = await window.api.getTrackFileUrl(currentTrack.filePath);
+          audio.src = url;
+          audio.currentTime = 0;
+        }
+      }
+
+      setState((s) => ({
+        ...s,
+        queue: tracks,
+        queueIndex: finalIndex,
+        currentTrack,
+        isPlaying: false,
+        currentTime: 0,
+        shuffle: sh,
+        repeat: rp,
+      }));
+      lastPersistedSig.current = raw;
+    } catch (e) {
+      console.warn('Failed to restore queue:', e);
+    }
+  }, []);
+
   // ---------- audio element setup ----------
   useEffect(() => {
     const audio = new Audio();
@@ -481,6 +577,7 @@ export function usePlayer() {
     addToQueueEnd,
     removeFromQueue,
     jumpToQueueIndex,
+    restoreQueue,
   };
 }
 

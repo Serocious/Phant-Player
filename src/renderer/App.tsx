@@ -1,10 +1,11 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import type { Album, Track, Artist, Playlist, ScanProgress, LastfmStatus } from '../shared/types';
 import { usePlayer, formatTime } from './hooks/usePlayer';
 import { useMediaSession } from './hooks/useMediaSession';
 import { useFavourites } from './hooks/useFavourites';
 import { usePlaylists } from './hooks/usePlaylists';
 import { useDragSeek } from './hooks/useDragSeek';
+import { useDiscordPresence } from './hooks/useDiscordPresence';
 import { AlbumCover } from './components/AlbumCover';
 import { SearchBox } from './components/SearchBox';
 import { ContextMenu, type ContextMenuEntry } from './components/ContextMenu';
@@ -60,6 +61,32 @@ export default function App() {
   const [pendingTrackForNewPlaylist, setPendingTrackForNewPlaylist] = useState<Track | null>(null);
   const [renamePlaylist, setRenamePlaylist] = useState<Playlist | null>(null);
   const [deletePlaylist, setDeletePlaylist] = useState<Playlist | null>(null);
+  const [discordEnabled, setDiscordEnabled] = useState(false);
+  const [discordClientId, setDiscordClientId] = useState<string>('');
+
+  // Load Discord settings on startup, then wire to the rich presence module.
+  useEffect(() => {
+    (async () => {
+      const id = await window.api.getSetting<string>('discordClientId');
+      const enabled = await window.api.getSetting<boolean>('discordRpcEnabled');
+      const idStr = id || '';
+      const en = !!enabled && !!idStr;
+      setDiscordClientId(idStr);
+      setDiscordEnabled(en);
+      window.api.discordRpcConfigure(idStr || null, en).catch(() => {});
+    })();
+  }, []);
+
+  // Reconfigure the main-process module whenever the user changes settings
+  useEffect(() => {
+    window.api.discordRpcConfigure(
+      discordClientId || null,
+      discordEnabled && !!discordClientId,
+    ).catch(() => {});
+  }, [discordClientId, discordEnabled]);
+
+  // Push activity updates
+  useDiscordPresence(player.state, discordEnabled && !!discordClientId);
 
   useMediaSession(player.state, {
     togglePlay: player.togglePlay,
@@ -157,10 +184,13 @@ export default function App() {
         if (a.length === 0) {
           await runScan(folder);
         }
+        // Restore queue from previous session (silently — paused, ready to resume)
+        await player.restoreQueue();
       } else {
         setNeedsSetup(true);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -263,6 +293,16 @@ export default function App() {
             <SettingsView
               musicFolder={musicFolder}
               onChangeFolder={handleChangeFolder}
+              discordClientId={discordClientId}
+              discordEnabled={discordEnabled}
+              onChangeDiscordClientId={async (id) => {
+                setDiscordClientId(id);
+                await window.api.setSetting('discordClientId', id);
+              }}
+              onChangeDiscordEnabled={async (en) => {
+                setDiscordEnabled(en);
+                await window.api.setSetting('discordRpcEnabled', en);
+              }}
             />
           ) : view.kind === 'album-detail' ? (
             <AlbumDetailView
@@ -934,6 +974,12 @@ function PlaylistDetailView({
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
 
+  // Drag state
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const dragGhostRef = useRef<{ x: number; y: number } | null>(null);
+  const [, forceRerender] = useState({});
+
   // Reload tracks whenever the playlist or its track count changes
   const trackCount = playlist.trackCount;
   useEffect(() => {
@@ -967,6 +1013,99 @@ function PlaylistDetailView({
     const remMin = minutes % 60;
     return `${hours} ${hours === 1 ? 'hour' : 'hours'}${remMin > 0 ? ` ${remMin} min` : ''}`;
   };
+
+  // Drag-to-reorder is disabled while a search is active (because the visible
+  // order doesn't match the actual order) and while loading.
+  const reorderEnabled = !query.trim() && !loading && tracks.length > 1;
+
+  // Track row refs to compute drop position from cursor Y
+  const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const setRowRef = useCallback((idx: number, el: HTMLDivElement | null) => {
+    if (el) rowRefs.current.set(idx, el);
+    else rowRefs.current.delete(idx);
+  }, []);
+
+  const startDrag = useCallback((e: React.MouseEvent, idx: number) => {
+    if (!reorderEnabled) return;
+    if (e.button !== 0) return;
+    // Only start drag if target isn't an interactive control (button)
+    const target = e.target as HTMLElement;
+    if (target.closest('button')) return;
+    e.preventDefault();
+    setDragIndex(idx);
+    setDropIndex(idx);
+    dragGhostRef.current = { x: e.clientX, y: e.clientY };
+    forceRerender({});
+  }, [reorderEnabled]);
+
+  // Document-wide listeners while dragging
+  useEffect(() => {
+    if (dragIndex === null) return;
+
+    const onMove = (e: MouseEvent) => {
+      dragGhostRef.current = { x: e.clientX, y: e.clientY };
+
+      // Find which row the cursor is over (top-half = drop above, bottom-half = drop below)
+      let newDropIndex: number | null = null;
+      for (const [idx, el] of rowRefs.current) {
+        const rect = el.getBoundingClientRect();
+        if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+          const halfway = rect.top + rect.height / 2;
+          newDropIndex = e.clientY < halfway ? idx : idx + 1;
+          break;
+        }
+      }
+      // If above all rows, drop at 0; if below all, drop at end
+      if (newDropIndex === null && rowRefs.current.size > 0) {
+        const sorted = [...rowRefs.current.entries()].sort((a, b) =>
+          a[1].getBoundingClientRect().top - b[1].getBoundingClientRect().top
+        );
+        const firstRect = sorted[0][1].getBoundingClientRect();
+        const lastRect = sorted[sorted.length - 1][1].getBoundingClientRect();
+        if (e.clientY < firstRect.top) newDropIndex = 0;
+        else if (e.clientY > lastRect.bottom) newDropIndex = tracks.length;
+      }
+      if (newDropIndex !== null) setDropIndex(newDropIndex);
+      forceRerender({});
+    };
+
+    const onUp = async () => {
+      const from = dragIndex;
+      const to = dropIndex;
+      setDragIndex(null);
+      setDropIndex(null);
+      dragGhostRef.current = null;
+
+      if (from === null || to === null) return;
+      // Adjust: if moving down, the target index decreases by 1 because we
+      // removed the item before reinserting
+      const finalTo = to > from ? to - 1 : to;
+      if (finalTo === from) return;
+
+      // Compute new order
+      const next = [...tracks];
+      const [moved] = next.splice(from, 1);
+      next.splice(finalTo, 0, moved);
+      setTracks(next); // optimistic update
+
+      try {
+        await window.api.playlistReorder(playlist.id, next.map((t) => t.filePath));
+      } catch (e) {
+        console.error('Reorder failed:', e);
+        // Revert on error
+        setTracks(tracks);
+      }
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [dragIndex, dropIndex, tracks, playlist.id]);
+
+  const draggedTrack = dragIndex !== null ? tracks[dragIndex] : null;
 
   return (
     <>
@@ -1007,7 +1146,7 @@ function PlaylistDetailView({
       ) : filtered.length === 0 ? (
         <div className="empty-state-inline">No matches for "{query}"</div>
       ) : (
-        <div className="track-list track-list-wide">
+        <div className={`track-list track-list-wide ${dragIndex !== null ? 'is-dragging' : ''}`}>
           <div className="track-list-header track-row-wide">
             <div></div>
             <div>Title</div>
@@ -1020,63 +1159,80 @@ function PlaylistDetailView({
           {filtered.map((t, i) => {
             const playing = currentTrackPath === t.filePath;
             const isFav = favourites.isFavourite(t.filePath);
-
-            // Custom context menu for tracks inside a playlist: includes a
-            // "Remove from playlist" option.
-            const handleRowContextMenu = (e: React.MouseEvent) => {
-              e.preventDefault();
-              // Reuse the global handler but inject our extra item by temporarily
-              // intercepting. Simplest: just call default and let the user use
-              // the row's "remove" hover button. But we want it in the menu too.
-              // Easier: build a new event that the global handler picks up.
-              onTrackContextMenu(e, t);
-            };
+            // We use the index into `tracks` (not `filtered`) for drag — only
+            // possible when query is empty (reorderEnabled), so they match.
+            const realIdx = i;
+            const isDragging = dragIndex === realIdx;
+            const showDropAbove = dropIndex === realIdx && dragIndex !== null && dropIndex !== dragIndex && dropIndex !== dragIndex + 1;
+            const showDropBelow = dropIndex === realIdx + 1 && i === filtered.length - 1 && dragIndex !== null && dropIndex !== dragIndex && dropIndex !== dragIndex + 1;
 
             return (
-              <div
-                key={t.id}
-                className={`track-row track-row-wide ${playing ? 'playing' : ''}`}
-                onDoubleClick={() => onPlayTracks(filtered, i)}
-                onContextMenu={handleRowContextMenu}
-              >
-                <div className="track-row-cover">
-                  <AlbumCover trackPath={t.filePath} alt={t.album} className="track-row-cover-img" />
+              <React.Fragment key={t.id}>
+                {showDropAbove && <div className="drop-indicator" />}
+                <div
+                  ref={(el) => setRowRef(realIdx, el)}
+                  className={`track-row track-row-wide ${playing ? 'playing' : ''} ${isDragging ? 'being-dragged' : ''} ${reorderEnabled ? 'reorderable' : ''}`}
+                  onDoubleClick={() => onPlayTracks(filtered, i)}
+                  onContextMenu={(e) => onTrackContextMenu(e, t)}
+                  onMouseDown={(e) => startDrag(e, realIdx)}
+                >
+                  <div className="track-row-cover">
+                    <AlbumCover trackPath={t.filePath} alt={t.album} className="track-row-cover-img" />
+                  </div>
+                  <div className="track-title">{t.title}</div>
+                  <div className="track-secondary">{t.artist}</div>
+                  <div className="track-secondary">{t.album}</div>
+                  <div className="track-fav">
+                    <FavouriteButton
+                      isFavourite={isFav}
+                      onToggle={() => favourites.toggle(t.filePath)}
+                      showOnHover={!isFav}
+                    />
+                  </div>
+                  <div className="track-info">
+                    <button
+                      className="info-btn show-on-hover"
+                      onClick={(e) => { e.stopPropagation(); onOpenDetails(t); }}
+                      title="Track details"
+                      aria-label="Track details"
+                    >
+                      <InfoIcon />
+                    </button>
+                    <button
+                      className="info-btn show-on-hover"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        playlists.removeTrack(playlist.id, t.filePath);
+                      }}
+                      title="Remove from playlist"
+                      aria-label="Remove from playlist"
+                    >
+                      <CloseIcon size={12} />
+                    </button>
+                  </div>
+                  <div className="track-time">{formatTime(t.duration)}</div>
                 </div>
-                <div className="track-title">{t.title}</div>
-                <div className="track-secondary">{t.artist}</div>
-                <div className="track-secondary">{t.album}</div>
-                <div className="track-fav">
-                  <FavouriteButton
-                    isFavourite={isFav}
-                    onToggle={() => favourites.toggle(t.filePath)}
-                    showOnHover={!isFav}
-                  />
-                </div>
-                <div className="track-info">
-                  <button
-                    className="info-btn show-on-hover"
-                    onClick={(e) => { e.stopPropagation(); onOpenDetails(t); }}
-                    title="Track details"
-                    aria-label="Track details"
-                  >
-                    <InfoIcon />
-                  </button>
-                  <button
-                    className="info-btn show-on-hover"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      playlists.removeTrack(playlist.id, t.filePath);
-                    }}
-                    title="Remove from playlist"
-                    aria-label="Remove from playlist"
-                  >
-                    <CloseIcon size={12} />
-                  </button>
-                </div>
-                <div className="track-time">{formatTime(t.duration)}</div>
-              </div>
+                {showDropBelow && <div className="drop-indicator" />}
+              </React.Fragment>
             );
           })}
+        </div>
+      )}
+
+      {/* Floating ghost row that follows the cursor during drag */}
+      {draggedTrack && dragGhostRef.current && (
+        <div
+          className="drag-ghost"
+          style={{
+            left: dragGhostRef.current.x + 12,
+            top: dragGhostRef.current.y - 16,
+          }}
+        >
+          <AlbumCover trackPath={draggedTrack.filePath} alt={draggedTrack.album} className="drag-ghost-cover" />
+          <div className="drag-ghost-info">
+            <div className="drag-ghost-title">{draggedTrack.title}</div>
+            <div className="drag-ghost-artist">{draggedTrack.artist}</div>
+          </div>
         </div>
       )}
     </>
@@ -1102,6 +1258,12 @@ function FavouritesView({
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
 
+  // Drag state — same pattern as PlaylistDetailView
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const dragGhostRef = useRef<{ x: number; y: number } | null>(null);
+  const [, forceRerender] = useState({});
+
   // Reload when the favourites set changes (e.g. user toggled a favourite from
   // somewhere else in the app)
   const favCount = favourites.favourites.size;
@@ -1122,6 +1284,89 @@ function FavouritesView({
       t.album.toLowerCase().includes(q)
     );
   }, [tracks, query]);
+
+  const reorderEnabled = !query.trim() && !loading && tracks.length > 1;
+
+  // Per-row refs so we can compute the drop position from cursor Y
+  const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const setRowRef = useCallback((idx: number, el: HTMLDivElement | null) => {
+    if (el) rowRefs.current.set(idx, el);
+    else rowRefs.current.delete(idx);
+  }, []);
+
+  const startDrag = useCallback((e: React.MouseEvent, idx: number) => {
+    if (!reorderEnabled) return;
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('button')) return;
+    e.preventDefault();
+    setDragIndex(idx);
+    setDropIndex(idx);
+    dragGhostRef.current = { x: e.clientX, y: e.clientY };
+    forceRerender({});
+  }, [reorderEnabled]);
+
+  useEffect(() => {
+    if (dragIndex === null) return;
+
+    const onMove = (e: MouseEvent) => {
+      dragGhostRef.current = { x: e.clientX, y: e.clientY };
+
+      let newDropIndex: number | null = null;
+      for (const [idx, el] of rowRefs.current) {
+        const rect = el.getBoundingClientRect();
+        if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+          const halfway = rect.top + rect.height / 2;
+          newDropIndex = e.clientY < halfway ? idx : idx + 1;
+          break;
+        }
+      }
+      if (newDropIndex === null && rowRefs.current.size > 0) {
+        const sorted = [...rowRefs.current.entries()].sort((a, b) =>
+          a[1].getBoundingClientRect().top - b[1].getBoundingClientRect().top
+        );
+        const firstRect = sorted[0][1].getBoundingClientRect();
+        const lastRect = sorted[sorted.length - 1][1].getBoundingClientRect();
+        if (e.clientY < firstRect.top) newDropIndex = 0;
+        else if (e.clientY > lastRect.bottom) newDropIndex = tracks.length;
+      }
+      if (newDropIndex !== null) setDropIndex(newDropIndex);
+      forceRerender({});
+    };
+
+    const onUp = async () => {
+      const from = dragIndex;
+      const to = dropIndex;
+      setDragIndex(null);
+      setDropIndex(null);
+      dragGhostRef.current = null;
+
+      if (from === null || to === null) return;
+      const finalTo = to > from ? to - 1 : to;
+      if (finalTo === from) return;
+
+      const next = [...tracks];
+      const [moved] = next.splice(from, 1);
+      next.splice(finalTo, 0, moved);
+      setTracks(next); // optimistic update
+
+      try {
+        await window.api.favouritesReorder(next.map((t) => t.filePath));
+      } catch (e) {
+        console.error('Reorder failed:', e);
+        setTracks(tracks);
+      }
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [dragIndex, dropIndex, tracks]);
+
+  const draggedTrack = dragIndex !== null ? tracks[dragIndex] : null;
 
   return (
     <>
@@ -1153,7 +1398,7 @@ function FavouritesView({
       ) : filtered.length === 0 ? (
         <div className="empty-state-inline">No matches for "{query}"</div>
       ) : (
-        <div className="track-list track-list-wide">
+        <div className={`track-list track-list-wide ${dragIndex !== null ? 'is-dragging' : ''}`}>
           <div className="track-list-header track-row-wide">
             <div></div>
             <div>Title</div>
@@ -1166,39 +1411,66 @@ function FavouritesView({
           {filtered.map((t, i) => {
             const playing = currentTrackPath === t.filePath;
             const isFav = favourites.isFavourite(t.filePath);
+            const realIdx = i;
+            const isDragging = dragIndex === realIdx;
+            const showDropAbove = dropIndex === realIdx && dragIndex !== null && dropIndex !== dragIndex && dropIndex !== dragIndex + 1;
+            const showDropBelow = dropIndex === realIdx + 1 && i === filtered.length - 1 && dragIndex !== null && dropIndex !== dragIndex && dropIndex !== dragIndex + 1;
+
             return (
-              <div
-                key={t.id}
-                className={`track-row track-row-wide ${playing ? 'playing' : ''}`}
-                onDoubleClick={() => onPlayTracks(filtered, i)}
-                onContextMenu={(e) => onTrackContextMenu(e, t)}
-              >
-                <div className="track-row-cover">
-                  <AlbumCover trackPath={t.filePath} alt={t.album} className="track-row-cover-img" />
+              <React.Fragment key={t.id}>
+                {showDropAbove && <div className="drop-indicator" />}
+                <div
+                  ref={(el) => setRowRef(realIdx, el)}
+                  className={`track-row track-row-wide ${playing ? 'playing' : ''} ${isDragging ? 'being-dragged' : ''} ${reorderEnabled ? 'reorderable' : ''}`}
+                  onDoubleClick={() => onPlayTracks(filtered, i)}
+                  onContextMenu={(e) => onTrackContextMenu(e, t)}
+                  onMouseDown={(e) => startDrag(e, realIdx)}
+                >
+                  <div className="track-row-cover">
+                    <AlbumCover trackPath={t.filePath} alt={t.album} className="track-row-cover-img" />
+                  </div>
+                  <div className="track-title">{t.title}</div>
+                  <div className="track-secondary">{t.artist}</div>
+                  <div className="track-secondary">{t.album}</div>
+                  <div className="track-fav">
+                    <FavouriteButton
+                      isFavourite={isFav}
+                      onToggle={() => favourites.toggle(t.filePath)}
+                    />
+                  </div>
+                  <div className="track-info">
+                    <button
+                      className="info-btn show-on-hover"
+                      onClick={(e) => { e.stopPropagation(); onOpenDetails(t); }}
+                      title="Track details"
+                      aria-label="Track details"
+                    >
+                      <InfoIcon />
+                    </button>
+                  </div>
+                  <div className="track-time">{formatTime(t.duration)}</div>
                 </div>
-                <div className="track-title">{t.title}</div>
-                <div className="track-secondary">{t.artist}</div>
-                <div className="track-secondary">{t.album}</div>
-                <div className="track-fav">
-                  <FavouriteButton
-                    isFavourite={isFav}
-                    onToggle={() => favourites.toggle(t.filePath)}
-                  />
-                </div>
-                <div className="track-info">
-                  <button
-                    className="info-btn show-on-hover"
-                    onClick={(e) => { e.stopPropagation(); onOpenDetails(t); }}
-                    title="Track details"
-                    aria-label="Track details"
-                  >
-                    <InfoIcon />
-                  </button>
-                </div>
-                <div className="track-time">{formatTime(t.duration)}</div>
-              </div>
+                {showDropBelow && <div className="drop-indicator" />}
+              </React.Fragment>
             );
           })}
+        </div>
+      )}
+
+      {/* Floating ghost row that follows the cursor during drag */}
+      {draggedTrack && dragGhostRef.current && (
+        <div
+          className="drag-ghost"
+          style={{
+            left: dragGhostRef.current.x + 12,
+            top: dragGhostRef.current.y - 16,
+          }}
+        >
+          <AlbumCover trackPath={draggedTrack.filePath} alt={draggedTrack.album} className="drag-ghost-cover" />
+          <div className="drag-ghost-info">
+            <div className="drag-ghost-title">{draggedTrack.title}</div>
+            <div className="drag-ghost-artist">{draggedTrack.artist}</div>
+          </div>
         </div>
       )}
     </>
@@ -1210,9 +1482,17 @@ function FavouritesView({
 function SettingsView({
   musicFolder,
   onChangeFolder,
+  discordClientId,
+  discordEnabled,
+  onChangeDiscordClientId,
+  onChangeDiscordEnabled,
 }: {
   musicFolder: string | null;
   onChangeFolder: (folder: string) => void;
+  discordClientId: string;
+  discordEnabled: boolean;
+  onChangeDiscordClientId: (id: string) => void;
+  onChangeDiscordEnabled: (enabled: boolean) => void;
 }) {
   const [status, setStatus] = useState<LastfmStatus | null>(null);
   const [authStep, setAuthStep] = useState<'idle' | 'awaiting-browser' | 'completing'>('idle');
@@ -1323,6 +1603,51 @@ function SettingsView({
             {error && <p style={{ color: '#ff6b6b', fontSize: 13, marginTop: 12 }}>{error}</p>}
           </div>
         )}
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Discord Rich Presence</div>
+        <div className="settings-info">
+          <p>Show what you're listening to in your Discord status.</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+            You'll need to register a Discord application to get a Client ID. Visit{' '}
+            <a
+              href="#"
+              onClick={(e) => { e.preventDefault(); window.api.openExternal('https://discord.com/developers/applications'); }}
+            >discord.com/developers/applications</a>, click "New Application", give it a name (e.g. "Phant"), then copy its Application ID. The app's name and icon are what'll appear in your Discord status.
+          </p>
+
+          <div className="setting-row">
+            <label className="setting-label" htmlFor="discord-client-id">Discord Client ID</label>
+            <input
+              id="discord-client-id"
+              type="text"
+              className="text-input"
+              placeholder="e.g. 1234567890123456789"
+              value={discordClientId}
+              onChange={(e) => onChangeDiscordClientId(e.target.value.trim())}
+            />
+          </div>
+
+          <div className="setting-row">
+            <label className="setting-toggle">
+              <input
+                type="checkbox"
+                checked={discordEnabled}
+                disabled={!discordClientId}
+                onChange={(e) => onChangeDiscordEnabled(e.target.checked)}
+              />
+              <span>Enabled</span>
+            </label>
+            {!discordClientId && (
+              <span className="setting-hint">Set a Client ID first</span>
+            )}
+          </div>
+
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 12 }}>
+            Album art is looked up via the iTunes API. Tracks not on Apple Music will show the Phant logo instead.
+          </p>
+        </div>
       </div>
     </>
   );

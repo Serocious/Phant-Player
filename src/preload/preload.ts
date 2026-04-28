@@ -32,6 +32,9 @@ const api = {
   favouritesRemove: (filePath: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.FAVOURITES_REMOVE, filePath),
 
+  favouritesReorder: (orderedPaths: string[]): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.FAVOURITES_REORDER, orderedPaths),
+
   getTrackDetails: (filePath: string): Promise<TrackDetails | null> =>
     ipcRenderer.invoke(IPC.TRACK_DETAILS, filePath),
 
@@ -56,6 +59,12 @@ const api = {
   playlistRemoveTrack: (playlistId: number, filePath: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.PLAYLIST_REMOVE_TRACK, playlistId, filePath),
 
+  playlistReorder: (playlistId: number, orderedPaths: string[]): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.PLAYLIST_REORDER, playlistId, orderedPaths),
+
+  tracksByPaths: (filePaths: string[]): Promise<Track[]> =>
+    ipcRenderer.invoke(IPC.TRACKS_BY_PATHS, filePaths),
+
   getNote: (filePath: string): Promise<string> =>
     ipcRenderer.invoke(IPC.NOTE_GET, filePath),
 
@@ -64,6 +73,22 @@ const api = {
 
   showInFolder: (filePath: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.SHOW_IN_FOLDER, filePath),
+
+  discordRpcConfigure: (clientId: string | null, enabled: boolean): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.DISCORD_RPC_CONFIGURE, clientId, enabled),
+
+  discordRpcSetActivity: (activity: {
+    artist: string;
+    title: string;
+    album: string;
+    durationSec: number;
+    startTimestampSec: number;
+    paused: boolean;
+  } | null): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.DISCORD_RPC_SET_ACTIVITY, activity),
+
+  openExternal: (url: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
 
   getAlbumArt: (trackFilePath: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.LIBRARY_GET_ALBUM_ART, trackFilePath),

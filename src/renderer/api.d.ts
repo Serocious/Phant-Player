@@ -13,6 +13,7 @@ declare global {
       favouritesGetTracks: () => Promise<Track[]>;
       favouritesAdd: (filePath: string) => Promise<boolean>;
       favouritesRemove: (filePath: string) => Promise<boolean>;
+      favouritesReorder: (orderedPaths: string[]) => Promise<boolean>;
       getTrackDetails: (filePath: string) => Promise<TrackDetails | null>;
       playlistList: () => Promise<Playlist[]>;
       playlistCreate: (name: string) => Promise<Playlist>;
@@ -21,9 +22,21 @@ declare global {
       playlistGetTracks: (playlistId: number) => Promise<Track[]>;
       playlistAddTrack: (playlistId: number, filePath: string) => Promise<boolean>;
       playlistRemoveTrack: (playlistId: number, filePath: string) => Promise<boolean>;
+      playlistReorder: (playlistId: number, orderedPaths: string[]) => Promise<boolean>;
+      tracksByPaths: (filePaths: string[]) => Promise<Track[]>;
       getNote: (filePath: string) => Promise<string>;
       setNote: (filePath: string, notes: string) => Promise<boolean>;
       showInFolder: (filePath: string) => Promise<boolean>;
+      discordRpcConfigure: (clientId: string | null, enabled: boolean) => Promise<boolean>;
+      discordRpcSetActivity: (activity: {
+        artist: string;
+        title: string;
+        album: string;
+        durationSec: number;
+        startTimestampSec: number;
+        paused: boolean;
+      } | null) => Promise<boolean>;
+      openExternal: (url: string) => Promise<boolean>;
       getAlbumArt: (trackFilePath: string) => Promise<string | null>;
       getTrackFileUrl: (filePath: string) => Promise<string>;
       getSetting: <T = any>(key: string) => Promise<T | null>;

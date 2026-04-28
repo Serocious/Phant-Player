@@ -120,6 +120,23 @@ export async function initDb(): Promise<Database> {
   // SQLite throws if the column already exists — we catch and ignore.
   try { db.run('ALTER TABLE tracks ADD COLUMN sampleRate INTEGER'); } catch {}
   try { db.run('ALTER TABLE tracks ADD COLUMN channels INTEGER'); } catch {}
+  try { db.run('ALTER TABLE favourites ADD COLUMN position INTEGER'); } catch {}
+
+  // Backfill: any favourites that don't have a position yet get one based on
+  // their current addedAt order (oldest = lowest position, so newest stays first
+  // in the default view since we render in position-ascending order after this
+  // migration). This runs once per DB.
+  const needsBackfill = get<{ c: number }>(
+    'SELECT COUNT(*) as c FROM favourites WHERE position IS NULL'
+  );
+  if (needsBackfill && needsBackfill.c > 0) {
+    const rows = all<{ filePath: string }>(
+      'SELECT filePath FROM favourites WHERE position IS NULL ORDER BY addedAt DESC'
+    );
+    rows.forEach((row, i) => {
+      run('UPDATE favourites SET position = ? WHERE filePath = ?', [i, row.filePath]);
+    });
+  }
 
   return db;
 }

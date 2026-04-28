@@ -14,6 +14,7 @@ app.commandLine.appendSwitch(
 import { initDb, run, all, get, closeDb } from './db';
 import { scanLibrary, getAlbumArtPath, getEmbeddedArtDataUrl } from './scanner';
 import { parseFile } from 'music-metadata';
+import { discordRichPresence } from './discordRpc';
 import {
   setConfig as setLastfmConfig,
   isConfigured as isLastfmConfigured,
@@ -279,7 +280,9 @@ function setupIpc() {
 
   // ---- Favourites ----
   ipcMain.handle(IPC.FAVOURITES_GET_ALL, (): string[] => {
-    const rows = all<{ filePath: string }>('SELECT filePath FROM favourites');
+    const rows = all<{ filePath: string }>(
+      'SELECT filePath FROM favourites ORDER BY position ASC'
+    );
     return rows.map((r) => r.filePath);
   });
 
@@ -288,20 +291,46 @@ function setupIpc() {
       SELECT t.*
       FROM tracks t
       INNER JOIN favourites f ON f.filePath = t.filePath
-      ORDER BY f.addedAt DESC
+      ORDER BY f.position ASC
     `);
   });
 
   ipcMain.handle(IPC.FAVOURITES_ADD, (_evt, filePath: string) => {
+    // New favourites get the highest position so they appear at the end
+    const maxPos = get<{ max: number | null }>(
+      'SELECT MAX(position) as max FROM favourites'
+    );
+    const nextPos = (maxPos?.max ?? -1) + 1;
     run(
-      'INSERT OR IGNORE INTO favourites (filePath, addedAt) VALUES (?, ?)',
-      [filePath, Date.now()]
+      'INSERT OR IGNORE INTO favourites (filePath, addedAt, position) VALUES (?, ?, ?)',
+      [filePath, Date.now(), nextPos]
     );
     return true;
   });
 
   ipcMain.handle(IPC.FAVOURITES_REMOVE, (_evt, filePath: string) => {
     run('DELETE FROM favourites WHERE filePath = ?', [filePath]);
+    return true;
+  });
+
+  /**
+   * Rewrite the position column for the entire favourites list based on the
+   * given ordering. Done in a single transaction.
+   */
+  ipcMain.handle(IPC.FAVOURITES_REORDER, (_evt, orderedPaths: string[]) => {
+    run('BEGIN');
+    try {
+      for (let i = 0; i < orderedPaths.length; i++) {
+        run(
+          'UPDATE favourites SET position = ? WHERE filePath = ?',
+          [i, orderedPaths[i]]
+        );
+      }
+      run('COMMIT');
+    } catch (e) {
+      run('ROLLBACK');
+      throw e;
+    }
     return true;
   });
 
@@ -403,6 +432,43 @@ function setupIpc() {
     return true;
   });
 
+  /**
+   * Reorder a playlist by passing the new full ordering of file paths.
+   * We rewrite the position column for every row in one transaction.
+   */
+  ipcMain.handle(IPC.PLAYLIST_REORDER, (_evt, playlistId: number, orderedPaths: string[]) => {
+    run('BEGIN');
+    try {
+      for (let i = 0; i < orderedPaths.length; i++) {
+        run(
+          'UPDATE playlist_tracks SET position = ? WHERE playlistId = ? AND filePath = ?',
+          [i, playlistId, orderedPaths[i]]
+        );
+      }
+      run('COMMIT');
+    } catch (e) {
+      run('ROLLBACK');
+      throw e;
+    }
+    return true;
+  });
+
+  /**
+   * Look up tracks by an array of file paths. Returns them in the same order
+   * as the input. Used to rehydrate the persisted queue at startup.
+   */
+  ipcMain.handle(IPC.TRACKS_BY_PATHS, (_evt, filePaths: string[]): Track[] => {
+    if (filePaths.length === 0) return [];
+    const placeholders = filePaths.map(() => '?').join(',');
+    const rows = all<Track>(
+      `SELECT * FROM tracks WHERE filePath IN (${placeholders})`,
+      filePaths
+    );
+    // Preserve the input order (SQL doesn't guarantee it)
+    const byPath = new Map(rows.map((r) => [r.filePath, r]));
+    return filePaths.map((p) => byPath.get(p)).filter((t): t is Track => t !== undefined);
+  });
+
   // ---- Notes ----
   ipcMain.handle(IPC.NOTE_GET, (_evt, filePath: string): string => {
     const row = get<{ notes: string }>('SELECT notes FROM track_notes WHERE filePath = ?', [filePath]);
@@ -428,6 +494,25 @@ function setupIpc() {
   ipcMain.handle(IPC.SHOW_IN_FOLDER, (_evt, filePath: string) => {
     // Highlights the file in the OS file manager. Works on Windows, macOS, Linux.
     shell.showItemInFolder(filePath);
+    return true;
+  });
+
+  // ---- Discord Rich Presence ----
+  ipcMain.handle(IPC.DISCORD_RPC_CONFIGURE, (_evt, clientId: string | null, enabled: boolean) => {
+    discordRichPresence.configure(clientId, enabled);
+    return true;
+  });
+
+  ipcMain.handle(IPC.DISCORD_RPC_SET_ACTIVITY, (_evt, activity: any) => {
+    discordRichPresence.setActivity(activity);
+    return true;
+  });
+
+  ipcMain.handle(IPC.OPEN_EXTERNAL, (_evt, url: string) => {
+    // Only allow http(s) URLs
+    if (typeof url !== 'string') return false;
+    if (!/^https?:\/\//i.test(url)) return false;
+    shell.openExternal(url);
     return true;
   });
 
@@ -488,10 +573,12 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  discordRichPresence.shutdown();
   closeDb();
   if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {
+  discordRichPresence.shutdown();
   closeDb();
 });
