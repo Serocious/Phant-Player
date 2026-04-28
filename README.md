@@ -4,10 +4,7 @@ A modern, pure-dark, periwinkle-accented local music player for Windows.
 
 Built because MusicBee's interface felt dated. Phant scans a music folder,
 displays albums in an Apple Music-style grid, plays MP3/FLAC/M4A/OGG/Opus/WAV,
-and integrates with Last.fm and the Windows System Media Transport Controls
-(so Discord rich presence works through Music Presence with no extra setup).
-
-![Phant screenshot — TODO replace this line with an actual screenshot]()
+and integrates with Last.fm and the Windows System Media Transport Controls.
 
 ## Features
 
@@ -75,13 +72,6 @@ run. Click "More info" → "Run anyway".
    the browser, and click **"I've authorised — complete connection"**.
 
 `config.json` is gitignored.
-
-## Discord rich presence
-
-Phant doesn't talk to Discord directly. Instead it registers with the Windows
-System Media Transport Controls (SMTC). Install
-[Music Presence](https://github.com/ungive/discord-music-presence), and it
-will pick up Phant automatically.
 
 ## Project layout
 
