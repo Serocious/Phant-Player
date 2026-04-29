@@ -2223,3 +2223,42 @@ button {
   background: var(--accent);
   transition: width 200ms ease;
 }
+
+/* =========================================================
+   Track row play overlay (small play button on the cover, hover-only)
+   ========================================================= */
+
+.track-row-cover {
+  position: relative;
+}
+
+.track-row-play-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  border: none;
+  border-radius: inherit;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 100ms ease;
+  padding: 0;
+}
+
+.track-row:hover .track-row-play-overlay {
+  opacity: 1;
+}
+
+/* When the row is being dragged, hide the hover overlay so it doesn't
+   interfere with the drag visual */
+.track-row.being-dragged .track-row-play-overlay {
+  opacity: 0;
+}
+
+.track-row-play-overlay:hover {
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--accent-bright);
+}

@@ -7,6 +7,7 @@ import { usePlaylists } from './hooks/usePlaylists';
 import { useDragSeek } from './hooks/useDragSeek';
 import { useDiscordPresence } from './hooks/useDiscordPresence';
 import { useUpdater } from './hooks/useUpdater';
+import { useReorderDrag } from './hooks/useReorderDrag';
 import { AlbumCover } from './components/AlbumCover';
 import { SearchBox } from './components/SearchBox';
 import { ContextMenu, type ContextMenuEntry } from './components/ContextMenu';
@@ -819,6 +820,14 @@ function SongsView({
               >
                 <div className="track-row-cover">
                   <AlbumCover trackPath={t.filePath} alt={t.album} className="track-row-cover-img" />
+                  <button
+                    className="track-row-play-overlay"
+                    onClick={(e) => { e.stopPropagation(); onPlayTracks(sorted, i); }}
+                    title="Play"
+                    aria-label="Play"
+                  >
+                    <PlayIcon size={12} />
+                  </button>
                 </div>
                 <div className="track-title">{t.title}</div>
                 <div className="track-secondary">{t.artist}</div>
@@ -994,12 +1003,6 @@ function PlaylistDetailView({
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
 
-  // Drag state
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [dropIndex, setDropIndex] = useState<number | null>(null);
-  const dragGhostRef = useRef<{ x: number; y: number } | null>(null);
-  const [, forceRerender] = useState({});
-
   // Reload tracks whenever the playlist or its track count changes
   const trackCount = playlist.trackCount;
   useEffect(() => {
@@ -1034,98 +1037,26 @@ function PlaylistDetailView({
     return `${hours} ${hours === 1 ? 'hour' : 'hours'}${remMin > 0 ? ` ${remMin} min` : ''}`;
   };
 
-  // Drag-to-reorder is disabled while a search is active (because the visible
-  // order doesn't match the actual order) and while loading.
   const reorderEnabled = !query.trim() && !loading && tracks.length > 1;
 
-  // Track row refs to compute drop position from cursor Y
-  const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  const setRowRef = useCallback((idx: number, el: HTMLDivElement | null) => {
-    if (el) rowRefs.current.set(idx, el);
-    else rowRefs.current.delete(idx);
-  }, []);
-
-  const startDrag = useCallback((e: React.MouseEvent, idx: number) => {
-    if (!reorderEnabled) return;
-    if (e.button !== 0) return;
-    // Only start drag if target isn't an interactive control (button)
-    const target = e.target as HTMLElement;
-    if (target.closest('button')) return;
-    e.preventDefault();
-    setDragIndex(idx);
-    setDropIndex(idx);
-    dragGhostRef.current = { x: e.clientX, y: e.clientY };
-    forceRerender({});
-  }, [reorderEnabled]);
-
-  // Document-wide listeners while dragging
-  useEffect(() => {
-    if (dragIndex === null) return;
-
-    const onMove = (e: MouseEvent) => {
-      dragGhostRef.current = { x: e.clientX, y: e.clientY };
-
-      // Find which row the cursor is over (top-half = drop above, bottom-half = drop below)
-      let newDropIndex: number | null = null;
-      for (const [idx, el] of rowRefs.current) {
-        const rect = el.getBoundingClientRect();
-        if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-          const halfway = rect.top + rect.height / 2;
-          newDropIndex = e.clientY < halfway ? idx : idx + 1;
-          break;
-        }
-      }
-      // If above all rows, drop at 0; if below all, drop at end
-      if (newDropIndex === null && rowRefs.current.size > 0) {
-        const sorted = [...rowRefs.current.entries()].sort((a, b) =>
-          a[1].getBoundingClientRect().top - b[1].getBoundingClientRect().top
-        );
-        const firstRect = sorted[0][1].getBoundingClientRect();
-        const lastRect = sorted[sorted.length - 1][1].getBoundingClientRect();
-        if (e.clientY < firstRect.top) newDropIndex = 0;
-        else if (e.clientY > lastRect.bottom) newDropIndex = tracks.length;
-      }
-      if (newDropIndex !== null) setDropIndex(newDropIndex);
-      forceRerender({});
-    };
-
-    const onUp = async () => {
-      const from = dragIndex;
-      const to = dropIndex;
-      setDragIndex(null);
-      setDropIndex(null);
-      dragGhostRef.current = null;
-
-      if (from === null || to === null) return;
-      // Adjust: if moving down, the target index decreases by 1 because we
-      // removed the item before reinserting
-      const finalTo = to > from ? to - 1 : to;
-      if (finalTo === from) return;
-
-      // Compute new order
+  // Drag-to-reorder. Commits via the playlistReorder IPC.
+  const drag = useReorderDrag({
+    rowCount: tracks.length,
+    onCommit: async (from, to) => {
       const next = [...tracks];
       const [moved] = next.splice(from, 1);
-      next.splice(finalTo, 0, moved);
+      next.splice(to, 0, moved);
       setTracks(next); // optimistic update
-
       try {
         await window.api.playlistReorder(playlist.id, next.map((t) => t.filePath));
       } catch (e) {
         console.error('Reorder failed:', e);
-        // Revert on error
-        setTracks(tracks);
+        setTracks(tracks); // revert
       }
-    };
+    },
+  });
 
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-    return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-  }, [dragIndex, dropIndex, tracks, playlist.id]);
-
-  const draggedTrack = dragIndex !== null ? tracks[dragIndex] : null;
+  const draggedTrack = drag.dragIndex !== null ? tracks[drag.dragIndex] : null;
 
   return (
     <>
@@ -1166,7 +1097,7 @@ function PlaylistDetailView({
       ) : filtered.length === 0 ? (
         <div className="empty-state-inline">No matches for "{query}"</div>
       ) : (
-        <div className={`track-list track-list-wide ${dragIndex !== null ? 'is-dragging' : ''}`}>
+        <div className={`track-list track-list-wide ${drag.isDragging ? 'is-dragging' : ''}`}>
           <div className="track-list-header track-row-wide">
             <div></div>
             <div>Title</div>
@@ -1179,25 +1110,42 @@ function PlaylistDetailView({
           {filtered.map((t, i) => {
             const playing = currentTrackPath === t.filePath;
             const isFav = favourites.isFavourite(t.filePath);
-            // We use the index into `tracks` (not `filtered`) for drag — only
-            // possible when query is empty (reorderEnabled), so they match.
             const realIdx = i;
-            const isDragging = dragIndex === realIdx;
-            const showDropAbove = dropIndex === realIdx && dragIndex !== null && dropIndex !== dragIndex && dropIndex !== dragIndex + 1;
-            const showDropBelow = dropIndex === realIdx + 1 && i === filtered.length - 1 && dragIndex !== null && dropIndex !== dragIndex && dropIndex !== dragIndex + 1;
+            const isDragging = drag.dragIndex === realIdx;
+            const showDropAbove =
+              drag.dropIndex === realIdx &&
+              drag.dragIndex !== null &&
+              drag.dropIndex !== drag.dragIndex &&
+              drag.dropIndex !== drag.dragIndex + 1;
+            const showDropBelow =
+              drag.dropIndex === realIdx + 1 &&
+              i === filtered.length - 1 &&
+              drag.dragIndex !== null &&
+              drag.dropIndex !== drag.dragIndex &&
+              drag.dropIndex !== drag.dragIndex + 1;
 
             return (
               <React.Fragment key={t.id}>
                 {showDropAbove && <div className="drop-indicator" />}
                 <div
-                  ref={(el) => setRowRef(realIdx, el)}
+                  ref={(el) => drag.setRowRef(realIdx, el)}
                   className={`track-row track-row-wide ${playing ? 'playing' : ''} ${isDragging ? 'being-dragged' : ''} ${reorderEnabled ? 'reorderable' : ''}`}
                   onDoubleClick={() => onPlayTracks(filtered, i)}
                   onContextMenu={(e) => onTrackContextMenu(e, t)}
-                  onMouseDown={(e) => startDrag(e, realIdx)}
+                  onMouseDown={(e) => {
+                    if (reorderEnabled) drag.startTracking(e, realIdx);
+                  }}
                 >
                   <div className="track-row-cover">
                     <AlbumCover trackPath={t.filePath} alt={t.album} className="track-row-cover-img" />
+                    <button
+                      className="track-row-play-overlay"
+                      onClick={(e) => { e.stopPropagation(); onPlayTracks(filtered, i); }}
+                      title="Play"
+                      aria-label="Play"
+                    >
+                      <PlayIcon size={12} />
+                    </button>
                   </div>
                   <div className="track-title">{t.title}</div>
                   <div className="track-secondary">{t.artist}</div>
@@ -1240,12 +1188,12 @@ function PlaylistDetailView({
       )}
 
       {/* Floating ghost row that follows the cursor during drag */}
-      {draggedTrack && dragGhostRef.current && (
+      {draggedTrack && drag.ghostPos && (
         <div
           className="drag-ghost"
           style={{
-            left: dragGhostRef.current.x + 12,
-            top: dragGhostRef.current.y - 16,
+            left: drag.ghostPos.x + 12,
+            top: drag.ghostPos.y - 16,
           }}
         >
           <AlbumCover trackPath={draggedTrack.filePath} alt={draggedTrack.album} className="drag-ghost-cover" />
@@ -1278,12 +1226,6 @@ function FavouritesView({
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
 
-  // Drag state — same pattern as PlaylistDetailView
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [dropIndex, setDropIndex] = useState<number | null>(null);
-  const dragGhostRef = useRef<{ x: number; y: number } | null>(null);
-  const [, forceRerender] = useState({});
-
   // Reload when the favourites set changes (e.g. user toggled a favourite from
   // somewhere else in the app)
   const favCount = favourites.favourites.size;
@@ -1307,86 +1249,24 @@ function FavouritesView({
 
   const reorderEnabled = !query.trim() && !loading && tracks.length > 1;
 
-  // Per-row refs so we can compute the drop position from cursor Y
-  const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  const setRowRef = useCallback((idx: number, el: HTMLDivElement | null) => {
-    if (el) rowRefs.current.set(idx, el);
-    else rowRefs.current.delete(idx);
-  }, []);
-
-  const startDrag = useCallback((e: React.MouseEvent, idx: number) => {
-    if (!reorderEnabled) return;
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest('button')) return;
-    e.preventDefault();
-    setDragIndex(idx);
-    setDropIndex(idx);
-    dragGhostRef.current = { x: e.clientX, y: e.clientY };
-    forceRerender({});
-  }, [reorderEnabled]);
-
-  useEffect(() => {
-    if (dragIndex === null) return;
-
-    const onMove = (e: MouseEvent) => {
-      dragGhostRef.current = { x: e.clientX, y: e.clientY };
-
-      let newDropIndex: number | null = null;
-      for (const [idx, el] of rowRefs.current) {
-        const rect = el.getBoundingClientRect();
-        if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
-          const halfway = rect.top + rect.height / 2;
-          newDropIndex = e.clientY < halfway ? idx : idx + 1;
-          break;
-        }
-      }
-      if (newDropIndex === null && rowRefs.current.size > 0) {
-        const sorted = [...rowRefs.current.entries()].sort((a, b) =>
-          a[1].getBoundingClientRect().top - b[1].getBoundingClientRect().top
-        );
-        const firstRect = sorted[0][1].getBoundingClientRect();
-        const lastRect = sorted[sorted.length - 1][1].getBoundingClientRect();
-        if (e.clientY < firstRect.top) newDropIndex = 0;
-        else if (e.clientY > lastRect.bottom) newDropIndex = tracks.length;
-      }
-      if (newDropIndex !== null) setDropIndex(newDropIndex);
-      forceRerender({});
-    };
-
-    const onUp = async () => {
-      const from = dragIndex;
-      const to = dropIndex;
-      setDragIndex(null);
-      setDropIndex(null);
-      dragGhostRef.current = null;
-
-      if (from === null || to === null) return;
-      const finalTo = to > from ? to - 1 : to;
-      if (finalTo === from) return;
-
+  // Drag-to-reorder. Commits via the favouritesReorder IPC.
+  const drag = useReorderDrag({
+    rowCount: tracks.length,
+    onCommit: async (from, to) => {
       const next = [...tracks];
       const [moved] = next.splice(from, 1);
-      next.splice(finalTo, 0, moved);
+      next.splice(to, 0, moved);
       setTracks(next); // optimistic update
-
       try {
         await window.api.favouritesReorder(next.map((t) => t.filePath));
       } catch (e) {
         console.error('Reorder failed:', e);
-        setTracks(tracks);
+        setTracks(tracks); // revert
       }
-    };
+    },
+  });
 
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-    return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-  }, [dragIndex, dropIndex, tracks]);
-
-  const draggedTrack = dragIndex !== null ? tracks[dragIndex] : null;
+  const draggedTrack = drag.dragIndex !== null ? tracks[drag.dragIndex] : null;
 
   return (
     <>
@@ -1418,7 +1298,7 @@ function FavouritesView({
       ) : filtered.length === 0 ? (
         <div className="empty-state-inline">No matches for "{query}"</div>
       ) : (
-        <div className={`track-list track-list-wide ${dragIndex !== null ? 'is-dragging' : ''}`}>
+        <div className={`track-list track-list-wide ${drag.isDragging ? 'is-dragging' : ''}`}>
           <div className="track-list-header track-row-wide">
             <div></div>
             <div>Title</div>
@@ -1432,22 +1312,41 @@ function FavouritesView({
             const playing = currentTrackPath === t.filePath;
             const isFav = favourites.isFavourite(t.filePath);
             const realIdx = i;
-            const isDragging = dragIndex === realIdx;
-            const showDropAbove = dropIndex === realIdx && dragIndex !== null && dropIndex !== dragIndex && dropIndex !== dragIndex + 1;
-            const showDropBelow = dropIndex === realIdx + 1 && i === filtered.length - 1 && dragIndex !== null && dropIndex !== dragIndex && dropIndex !== dragIndex + 1;
+            const isDragging = drag.dragIndex === realIdx;
+            const showDropAbove =
+              drag.dropIndex === realIdx &&
+              drag.dragIndex !== null &&
+              drag.dropIndex !== drag.dragIndex &&
+              drag.dropIndex !== drag.dragIndex + 1;
+            const showDropBelow =
+              drag.dropIndex === realIdx + 1 &&
+              i === filtered.length - 1 &&
+              drag.dragIndex !== null &&
+              drag.dropIndex !== drag.dragIndex &&
+              drag.dropIndex !== drag.dragIndex + 1;
 
             return (
               <React.Fragment key={t.id}>
                 {showDropAbove && <div className="drop-indicator" />}
                 <div
-                  ref={(el) => setRowRef(realIdx, el)}
+                  ref={(el) => drag.setRowRef(realIdx, el)}
                   className={`track-row track-row-wide ${playing ? 'playing' : ''} ${isDragging ? 'being-dragged' : ''} ${reorderEnabled ? 'reorderable' : ''}`}
                   onDoubleClick={() => onPlayTracks(filtered, i)}
                   onContextMenu={(e) => onTrackContextMenu(e, t)}
-                  onMouseDown={(e) => startDrag(e, realIdx)}
+                  onMouseDown={(e) => {
+                    if (reorderEnabled) drag.startTracking(e, realIdx);
+                  }}
                 >
                   <div className="track-row-cover">
                     <AlbumCover trackPath={t.filePath} alt={t.album} className="track-row-cover-img" />
+                    <button
+                      className="track-row-play-overlay"
+                      onClick={(e) => { e.stopPropagation(); onPlayTracks(filtered, i); }}
+                      title="Play"
+                      aria-label="Play"
+                    >
+                      <PlayIcon size={12} />
+                    </button>
                   </div>
                   <div className="track-title">{t.title}</div>
                   <div className="track-secondary">{t.artist}</div>
@@ -1478,12 +1377,12 @@ function FavouritesView({
       )}
 
       {/* Floating ghost row that follows the cursor during drag */}
-      {draggedTrack && dragGhostRef.current && (
+      {draggedTrack && drag.ghostPos && (
         <div
           className="drag-ghost"
           style={{
-            left: dragGhostRef.current.x + 12,
-            top: dragGhostRef.current.y - 16,
+            left: drag.ghostPos.x + 12,
+            top: drag.ghostPos.y - 16,
           }}
         >
           <AlbumCover trackPath={draggedTrack.filePath} alt={draggedTrack.album} className="drag-ghost-cover" />
