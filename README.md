@@ -9,8 +9,6 @@ Media Transport Controls.
 
 [Latest release](https://github.com/Serocious/Phant-Player/releases/latest)
 
-![Phant screenshot — TODO replace this line with an actual screenshot]()
-
 ## Features
 
 - **Library scan** over a folder of albums, with embedded album art extraction
