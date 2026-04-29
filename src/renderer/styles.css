@@ -169,14 +169,22 @@ button {
 .content {
   background: var(--bg-base);
   overflow-y: auto;
-  padding: 24px 32px 32px;
+  padding: 0 32px 32px;
 }
 
 .content-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 20px;
+  /* Stick to top of scroll area. Background extends full width via negative
+     margins so rows scrolling underneath don't bleed through. */
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-base);
+  margin-left: -32px;
+  margin-right: -32px;
+  padding: 24px 32px 20px;
 }
 
 .content-title {
@@ -369,6 +377,20 @@ button {
   letter-spacing: 0.06em;
   color: var(--text-muted);
   font-weight: 600;
+  /* Sticky offset is set at runtime via the --sticky-header-height CSS
+     custom property (computed from the actual height of .content-header).
+     This means the column labels always pin exactly below the title bar
+     regardless of how tall the title bar happens to be. */
+  position: sticky;
+  top: var(--sticky-header-height, 0px);
+  z-index: 5;
+  background: var(--bg-base);
+  /* Bleed across container padding so the row's underside isn't visible
+     through the gap between the two sticky elements */
+  margin-left: -32px;
+  margin-right: -32px;
+  padding-left: 32px;
+  padding-right: 32px;
 }
 
 .track-row {

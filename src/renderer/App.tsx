@@ -8,6 +8,7 @@ import { useDragSeek } from './hooks/useDragSeek';
 import { useDiscordPresence } from './hooks/useDiscordPresence';
 import { useUpdater } from './hooks/useUpdater';
 import { useReorderDrag } from './hooks/useReorderDrag';
+import { useStickyHeaderHeight } from './hooks/useStickyHeaderHeight';
 import { AlbumCover } from './components/AlbumCover';
 import { SearchBox } from './components/SearchBox';
 import { ContextMenu, type ContextMenuEntry } from './components/ContextMenu';
@@ -99,6 +100,10 @@ export default function App() {
 
   // Push activity updates
   useDiscordPresence(player.state, discordEnabled && !!discordClientId);
+
+  // Measure the sticky title bar's height so the column header can pin
+  // exactly below it. Sets --sticky-header-height on .content.
+  useStickyHeaderHeight();
 
   useMediaSession(player.state, {
     togglePlay: player.togglePlay,
@@ -1568,7 +1573,9 @@ function SettingsView({
           </div>
 
           <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 12 }}>
-            Album art is looked up via the iTunes API. Tracks not on Apple Music will show the Phant logo instead.
+            Album art is looked up via Last.fm (best for indie / doujin music)
+            with iTunes as a fallback. Tracks not found on either show the
+            Phant logo instead.
           </p>
         </div>
       </div>

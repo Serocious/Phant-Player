@@ -24,6 +24,15 @@ export function isConfigured(): boolean {
 }
 
 /**
+ * Returns the Last.fm API key if configured, otherwise null. The API key alone
+ * (no secret, no auth) is enough to call public read-only endpoints like
+ * album.getInfo. Used by the Discord RPC module for album-art lookups.
+ */
+export function getApiKey(): string | null {
+  return config?.apiKey || null;
+}
+
+/**
  * Load any saved session from the database. Returns the saved username if
  * found, else null.
  */

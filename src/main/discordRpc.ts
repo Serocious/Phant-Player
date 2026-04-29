@@ -2,9 +2,10 @@
  * Discord Rich Presence integration.
  *
  * Connects to the local Discord client via IPC (no network) and reports the
- * currently playing track. Album art is looked up via the iTunes Search API
- * — same approach used by Music Presence and similar apps. Falls back to
- * the Phant logo when no match is found.
+ * currently playing track. Album art is looked up via Last.fm first (best
+ * coverage for indie/doujin/non-mainstream music) and iTunes as a fallback
+ * (best for mainstream releases). Falls back to the Phant logo when neither
+ * matches.
  *
  * Discord constraints to be aware of:
  *  - Album art must be a public URL; we can't pass image bytes
@@ -12,6 +13,7 @@
  *  - The IPC connection drops when Discord closes; we retry every 30s
  */
 import { Client, type SetActivity } from '@xhayper/discord-rpc';
+import { getApiKey as getLastfmApiKey } from './lastfm';
 
 const CLIENT_ID_KEY = 'discordClientId';
 const ENABLED_KEY = 'discordRpcEnabled';
@@ -192,11 +194,65 @@ class DiscordRichPresence {
   }
 
   /**
-   * Look up an album cover via the iTunes Search API. Returns a public URL or
-   * null if not found.
+   * Look up album art. Tries multiple sources in order:
+   *   1. Last.fm (best coverage for indie / doujin / non-mainstream music)
+   *   2. iTunes (best coverage for mainstream releases)
+   * Returns the first successful URL, or null if none matched.
    */
   private async fetchAlbumArt(artist: string, album: string): Promise<string | null> {
     if (!artist || !album || album === 'Unknown Album') return null;
+
+    const lastfm = await this.fetchLastfmArt(artist, album);
+    if (lastfm) return lastfm;
+
+    const itunes = await this.fetchItunesArt(artist, album);
+    if (itunes) return itunes;
+
+    return null;
+  }
+
+  /**
+   * Look up album art via Last.fm's album.getInfo endpoint. Uses the user's
+   * existing API key — no signing required for public reads. Filters out
+   * Last.fm's well-known "no image" placeholder.
+   */
+  private async fetchLastfmArt(artist: string, album: string): Promise<string | null> {
+    const apiKey = getLastfmApiKey();
+    if (!apiKey) return null;
+    const url = `https://ws.audioscrobbler.com/2.0/` +
+      `?method=album.getinfo&autocorrect=1&format=json` +
+      `&api_key=${encodeURIComponent(apiKey)}` +
+      `&artist=${encodeURIComponent(artist)}` +
+      `&album=${encodeURIComponent(album)}`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const data = await res.json() as {
+        album?: { image?: Array<{ '#text': string; size: string }> };
+        error?: number;
+      };
+      if (data.error || !data.album?.image) return null;
+
+      // Image array comes ordered: small, medium, large, extralarge, mega.
+      // Pick the largest non-empty one.
+      const sizes = data.album.image;
+      for (let i = sizes.length - 1; i >= 0; i--) {
+        const url = sizes[i]['#text'];
+        if (!url) continue;
+        // Skip Last.fm's "no image" placeholder
+        if (url.includes('2a96cbd8b46e442fc41c2b86b821562f')) continue;
+        return url;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Look up album art via the iTunes Search API. Returns a public URL or null.
+   */
+  private async fetchItunesArt(artist: string, album: string): Promise<string | null> {
     const term = encodeURIComponent(`${artist} ${album}`);
     const url = `https://itunes.apple.com/search?term=${term}&entity=album&limit=1`;
     try {
@@ -205,7 +261,7 @@ class DiscordRichPresence {
       const data = await res.json() as { results?: Array<{ artworkUrl100?: string }> };
       const art = data.results?.[0]?.artworkUrl100;
       if (!art) return null;
-      // iTunes returns a 100×100 URL but accepts arbitrary sizes by string replace
+      // iTunes returns 100×100 by default but accepts arbitrary sizes via string replace
       return art.replace('100x100bb', '512x512bb');
     } catch (e) {
       return null;
