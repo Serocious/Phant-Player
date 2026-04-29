@@ -40,7 +40,6 @@ Media Transport Controls.
 - Vite for the renderer build
 - sql.js for the library database (no native compilation needed)
 - music-metadata for tag and embedded-art parsing
-- @xhayper/discord-rpc for Discord Rich Presence
 - electron-builder for the Windows installer
 
 ## Install (end users)
