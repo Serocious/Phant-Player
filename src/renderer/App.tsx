@@ -6,6 +6,7 @@ import { useFavourites } from './hooks/useFavourites';
 import { usePlaylists } from './hooks/usePlaylists';
 import { useDragSeek } from './hooks/useDragSeek';
 import { useDiscordPresence } from './hooks/useDiscordPresence';
+import { useUpdater } from './hooks/useUpdater';
 import { AlbumCover } from './components/AlbumCover';
 import { SearchBox } from './components/SearchBox';
 import { ContextMenu, type ContextMenuEntry } from './components/ContextMenu';
@@ -14,6 +15,7 @@ import { FavouriteButton } from './components/FavouriteButton';
 import { TrackDetailsPopup } from './components/TrackDetailsPopup';
 import { TextInputModal } from './components/TextInputModal';
 import { ConfirmModal } from './components/ConfirmModal';
+import { UpdateToast } from './components/UpdateToast';
 import {
   PlayIcon, PauseIcon, PrevIcon, NextIcon, VolumeIcon,
   AlbumsIcon, SongsIcon, ArtistsIcon,
@@ -63,6 +65,15 @@ export default function App() {
   const [deletePlaylist, setDeletePlaylist] = useState<Playlist | null>(null);
   const [discordEnabled, setDiscordEnabled] = useState(false);
   const [discordClientId, setDiscordClientId] = useState<string>('');
+  const updater = useUpdater();
+  const [updateToastDismissed, setUpdateToastDismissed] = useState(false);
+
+  // When a new actionable update state arrives, un-dismiss the toast so it
+  // appears again. Otherwise once the user dismisses, they won't see it
+  // until app restart.
+  useEffect(() => {
+    setUpdateToastDismissed(false);
+  }, [updater.status.state, (updater.status as any).version]);
 
   // Load Discord settings on startup, then wire to the rich presence module.
   useEffect(() => {
@@ -303,6 +314,7 @@ export default function App() {
                 setDiscordEnabled(en);
                 await window.api.setSetting('discordRpcEnabled', en);
               }}
+              updater={updater}
             />
           ) : view.kind === 'album-detail' ? (
             <AlbumDetailView
@@ -409,6 +421,14 @@ export default function App() {
             }
             setDeletePlaylist(null);
           }}
+        />
+      )}
+
+      {!updateToastDismissed && (
+        <UpdateToast
+          status={updater.status}
+          onInstall={updater.installNow}
+          onDismiss={() => setUpdateToastDismissed(true)}
         />
       )}
     </div>
@@ -1486,6 +1506,7 @@ function SettingsView({
   discordEnabled,
   onChangeDiscordClientId,
   onChangeDiscordEnabled,
+  updater,
 }: {
   musicFolder: string | null;
   onChangeFolder: (folder: string) => void;
@@ -1493,11 +1514,13 @@ function SettingsView({
   discordEnabled: boolean;
   onChangeDiscordClientId: (id: string) => void;
   onChangeDiscordEnabled: (enabled: boolean) => void;
+  updater: ReturnType<typeof useUpdater>;
 }) {
   const [status, setStatus] = useState<LastfmStatus | null>(null);
   const [authStep, setAuthStep] = useState<'idle' | 'awaiting-browser' | 'completing'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [userDataPath, setUserDataPath] = useState<string>('');
+  const [appVersion, setAppVersion] = useState<string>('');
 
   const refresh = useCallback(async () => {
     setStatus(await window.api.lastfmStatus());
@@ -1506,6 +1529,7 @@ function SettingsView({
   useEffect(() => {
     refresh();
     window.api.getUserDataPath().then(setUserDataPath);
+    window.api.getAppVersion().then(setAppVersion);
   }, [refresh]);
 
   const handlePickFolder = useCallback(async () => {
@@ -1647,6 +1671,44 @@ function SettingsView({
           <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 12 }}>
             Album art is looked up via the iTunes API. Tracks not on Apple Music will show the Phant logo instead.
           </p>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <div className="settings-section-title">Updates</div>
+        <div className="settings-info">
+          <div className="folder-row">
+            <div>
+              <div style={{ fontSize: 13 }}>
+                You're on Phant <strong>{appVersion || '…'}</strong>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                {updater.status.state === 'checking' && 'Checking for updates…'}
+                {updater.status.state === 'available' && `Update ${updater.status.version} found, downloading…`}
+                {updater.status.state === 'downloading' && `Downloading… ${Math.round(updater.status.percent)}%`}
+                {updater.status.state === 'ready' && `Update ${updater.status.version} ready to install`}
+                {updater.status.state === 'not-available' && 'You\'re on the latest version.'}
+                {updater.status.state === 'error' && `Couldn't check for updates: ${updater.status.message}`}
+                {updater.status.state === 'idle' && 'Phant checks for updates automatically every few hours.'}
+              </div>
+            </div>
+            <button
+              className="btn btn-secondary"
+              onClick={updater.checkForUpdates}
+              disabled={updater.status.state === 'checking' || updater.status.state === 'downloading'}
+            >
+              Check now
+            </button>
+          </div>
+          {updater.status.state === 'ready' && (
+            <button
+              className="btn"
+              style={{ marginTop: 12 }}
+              onClick={updater.installNow}
+            >
+              Restart and install
+            </button>
+          )}
         </div>
       </div>
     </>

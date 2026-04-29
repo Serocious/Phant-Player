@@ -69,6 +69,11 @@ export const IPC = {
   DISCORD_RPC_CONFIGURE: 'discord:configure',
   DISCORD_RPC_SET_ACTIVITY: 'discord:setActivity',
   OPEN_EXTERNAL: 'app:openExternal',
+  UPDATER_STATUS: 'updater:status',
+  UPDATER_CHECK: 'updater:check',
+  UPDATER_GET_STATUS: 'updater:getStatus',
+  UPDATER_QUIT_AND_INSTALL: 'updater:quitAndInstall',
+  GET_APP_VERSION: 'app:getVersion',
   SCAN_PROGRESS: 'scan:progress',
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
@@ -96,6 +101,18 @@ export interface Playlist {
   createdAt: number;
   trackCount: number;
 }
+
+/**
+ * Status of the auto-updater. Mirrors the union in the main-process updater.
+ */
+export type UpdateStatus =
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'available'; version: string }
+  | { state: 'downloading'; percent: number; transferred: number; total: number }
+  | { state: 'ready'; version: string }
+  | { state: 'not-available'; currentVersion: string }
+  | { state: 'error'; message: string };
 
 export interface LastfmStatus {
   configured: boolean; // API key + secret present in config

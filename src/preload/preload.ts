@@ -90,6 +90,24 @@ const api = {
   openExternal: (url: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
 
+  updaterGetStatus: (): Promise<any> =>
+    ipcRenderer.invoke(IPC.UPDATER_GET_STATUS),
+
+  updaterCheck: (): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.UPDATER_CHECK),
+
+  updaterQuitAndInstall: (): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.UPDATER_QUIT_AND_INSTALL),
+
+  getAppVersion: (): Promise<string> =>
+    ipcRenderer.invoke(IPC.GET_APP_VERSION),
+
+  onUpdaterStatus: (callback: (status: any) => void) => {
+    const listener = (_evt: any, status: any) => callback(status);
+    ipcRenderer.on(IPC.UPDATER_STATUS, listener);
+    return () => ipcRenderer.removeListener(IPC.UPDATER_STATUS, listener);
+  },
+
   getAlbumArt: (trackFilePath: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.LIBRARY_GET_ALBUM_ART, trackFilePath),
 

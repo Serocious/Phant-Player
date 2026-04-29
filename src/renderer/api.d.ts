@@ -1,4 +1,4 @@
-import type { Album, Track, Artist, ScanProgress, ScanResult, LastfmStatus, ScrobbleData, TrackDetails, Playlist } from '../shared/types';
+import type { Album, Track, Artist, ScanProgress, ScanResult, LastfmStatus, ScrobbleData, TrackDetails, Playlist, UpdateStatus } from '../shared/types';
 
 declare global {
   interface Window {
@@ -37,6 +37,11 @@ declare global {
         paused: boolean;
       } | null) => Promise<boolean>;
       openExternal: (url: string) => Promise<boolean>;
+      updaterGetStatus: () => Promise<UpdateStatus>;
+      updaterCheck: () => Promise<boolean>;
+      updaterQuitAndInstall: () => Promise<boolean>;
+      onUpdaterStatus: (callback: (status: UpdateStatus) => void) => () => void;
+      getAppVersion: () => Promise<string>;
       getAlbumArt: (trackFilePath: string) => Promise<string | null>;
       getTrackFileUrl: (filePath: string) => Promise<string>;
       getSetting: <T = any>(key: string) => Promise<T | null>;

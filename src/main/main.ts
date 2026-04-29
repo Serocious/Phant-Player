@@ -15,6 +15,7 @@ import { initDb, run, all, get, closeDb } from './db';
 import { scanLibrary, getAlbumArtPath, getEmbeddedArtDataUrl } from './scanner';
 import { parseFile } from 'music-metadata';
 import { discordRichPresence } from './discordRpc';
+import { updater } from './updater';
 import {
   setConfig as setLastfmConfig,
   isConfigured as isLastfmConfigured,
@@ -516,6 +517,21 @@ function setupIpc() {
     return true;
   });
 
+  // ---- Auto-update ----
+  ipcMain.handle(IPC.UPDATER_GET_STATUS, () => updater.getStatus());
+
+  ipcMain.handle(IPC.UPDATER_CHECK, () => {
+    updater.check(true);
+    return true;
+  });
+
+  ipcMain.handle(IPC.UPDATER_QUIT_AND_INSTALL, () => {
+    updater.quitAndInstall();
+    return true;
+  });
+
+  ipcMain.handle(IPC.GET_APP_VERSION, () => app.getVersion());
+
   ipcMain.handle(IPC.LIBRARY_GET_ALBUM_ART, async (_evt, trackFilePath: string): Promise<string | null> => {
     const folderArt = await getAlbumArtPath(trackFilePath);
     if (folderArt) {
@@ -566,6 +582,7 @@ app.whenReady().then(async () => {
   loadLastfmConfigFile();
   setupIpc();
   createWindow();
+  if (mainWindow) updater.start(mainWindow);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -573,6 +590,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  updater.stop();
   discordRichPresence.shutdown();
   closeDb();
   if (process.platform !== 'darwin') app.quit();
