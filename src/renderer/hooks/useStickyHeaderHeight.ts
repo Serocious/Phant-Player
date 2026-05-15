@@ -7,6 +7,9 @@ import { useEffect } from 'react';
  * pin exactly below the main header, regardless of the header's varying
  * content (title length, subtitle presence, button size etc.).
  *
+ * If the current view has no .content-header (e.g. album detail), the
+ * variable is cleared so sticky elements fall back to top: 0 / unset.
+ *
  * Re-measures when the window resizes and via a ResizeObserver on the
  * header itself, so layout changes are caught.
  */
@@ -15,18 +18,22 @@ export function useStickyHeaderHeight() {
     const update = () => {
       const header = document.querySelector('.content-header') as HTMLElement | null;
       const container = document.querySelector('.content') as HTMLElement | null;
-      if (!header || !container) return;
+      if (!container) return;
+      if (!header) {
+        // No header on this view (e.g. album detail). Clear the variable so
+        // any sticky column headers don't pin to a stale offset from a
+        // previous view.
+        container.style.removeProperty('--sticky-header-height');
+        return;
+      }
       const h = header.offsetHeight;
       container.style.setProperty('--sticky-header-height', `${h}px`);
     };
 
     update();
 
-    // Re-measure on window resize
     window.addEventListener('resize', update);
 
-    // Re-measure when the header's own size changes (e.g. switched view,
-    // title got longer, search icon appeared)
     let ro: ResizeObserver | null = null;
     const tryObserve = () => {
       const header = document.querySelector('.content-header') as HTMLElement | null;
@@ -38,13 +45,12 @@ export function useStickyHeaderHeight() {
     tryObserve();
 
     // Re-measure on a short interval for the first second after mount, to
-    // catch async layout changes (fonts loading, async content like search
-    // box rendering, etc.). Cheap and avoids fighting with React batching.
+    // catch async layout changes (fonts loading, etc).
     const intervalId = window.setInterval(update, 100);
     const stopId = window.setTimeout(() => window.clearInterval(intervalId), 1500);
 
     // MutationObserver to re-attach the ResizeObserver when the user
-    // navigates between views (the header element gets replaced)
+    // navigates between views (the header element gets replaced or removed)
     const mo = new MutationObserver(() => {
       tryObserve();
       update();

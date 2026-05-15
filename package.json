@@ -1,6 +1,6 @@
 {
   "name": "phant",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "Phant - a modern, pure-dark local music player",
   "main": "dist-electron/main/main.js",
   "type": "commonjs",
